@@ -1526,6 +1526,7 @@ class App:
         self.asleep = False
         self.icons_locked = False
         self.watch = Watcher()
+        self.shove_at = -9.0      # last time a bullet nudged an icon
         self.awake_since = 0.0
         self.greeted = False
         self.mem_saved = 0.0
@@ -1772,6 +1773,55 @@ class App:
         return (CFG["move_icons"] and BACKUP_OK and not self.icons_locked
                 and self.terrain.icons_ok)
 
+    def blast_icons(self, x, y, rad, power):
+        """Shove real desktop icons away from an explosion.
+
+        List coordinates differ from screen ones by the same constant for the
+        whole view, so one probe read gets the offset and everything after it
+        is a write. Capped at six icons a blast: each one is a round trip into
+        Explorer, and a minigun should not be able to queue forty of them."""
+        if not self.can_move_icons():
+            return 0
+        near = []
+        for name, l, t, r, b, idx in self.terrain.icons:
+            d = dist(x, y, (l + r) / 2, (t + b) / 2)
+            if d < rad:
+                near.append((d, l, t, r, b, idx))
+        if not near:
+            return 0
+        near.sort()
+        del near[6:]
+        held = {f.carry["idx"] for f in self.fighters if f.carry}
+        if not SHELL.open():
+            return 0
+        probe = SHELL.item_pos(near[0][5])
+        offx, offy = probe[0] - near[0][1], probe[1] - near[0][2]
+        gy = self.ground_at(x)
+        moved, fresh = 0, []
+        for d, l, t, r, b, idx in near:
+            if idx in held:
+                continue
+            w, h = r - l, b - t
+            ax, ay = (l + r) / 2 - x, (t + b) / 2 - y
+            n = math.hypot(ax, ay)
+            if n < 1.0:                       # sitting on the blast: pick a way
+                a = random.random() * TAU
+                ax, ay, n = math.cos(a), math.sin(a), 1.0
+            push = power * (1 - d / rad)
+            nx = clamp(l + ax / n * push, self.ox + 4, self.ox + self.W - w - 4)
+            ny = clamp(t + ay / n * push, self.oy + 4, gy - h - 4)
+            if SHELL.set_item_pos(idx, nx + offx, ny + offy):
+                moved += 1
+                self.puff((l + r) / 2, (t + b) / 2, 3, DUST, .7, 10)
+                fresh.append((name, int(nx), int(ny), int(nx) + w, int(ny) + h, idx))
+        if fresh:
+            # keep our own copy honest until the next terrain refresh, or a
+            # second blast in the same second shoves from stale positions
+            moved_idx = {e[5] for e in fresh}
+            self.terrain.icons = [e for e in self.terrain.icons
+                                  if e[5] not in moved_idx] + fresh
+        return moved
+
     def pick_up_icon(self, f, tgt):
         if not self.can_move_icons() or f.carry or tgt.get("kind") != "icon":
             return False
@@ -1980,6 +2030,8 @@ class App:
             self.boom(t["cx"], t["cy"], 44, k)
             f.anger = max(0, f.anger - .35)
             f.boredom = max(0, f.boredom - .45)
+            if f.mode == "fight" and f.foe and f.foe.hp > 0:
+                return          # wrecked in passing; he has not finished here
             if not self.pick_up_icon(f, t):
                 f.set_mood("smug" if random.random() < .6 else "hyped")
                 f.target = None
@@ -2005,6 +2057,7 @@ class App:
             p = (.30 if rage else .16) * f.per["aggro"] * (1.6 if losing else 1.0)
             if r < p:
                 f.mode = "fight"
+                f.snatch = False
                 f.plan = plan_weapon(f.per, rage)
                 f.set_state("fight")
                 f.yell("revenge" if losing else "fight", 1.4)
@@ -2562,6 +2615,11 @@ class App:
                 big = s["k"] == "rocket"
                 self.boom(sx, min(sy, gy), 70 if big else 56, k, big)
                 rad = (150 if big else 110) * (.5 + .5 * k)
+                # the blast physically clears icons, which is separate from the
+                # hit bookkeeping below and does not need a target to have been
+                # aimed at
+                self.blast_icons(sx, min(sy, gy), rad * 2.0,
+                                 (130 if big else 95) * (.5 + .5 * k))
                 rad2 = rad * rad
                 for cx, cy, _hw, _hh, t in bounds:
                     if (cx - sx) ** 2 + (cy - sy) ** 2 < rad2:
@@ -2578,6 +2636,11 @@ class App:
                 self.hit_target(s["owner"], hit_t, sx, sy)
                 self.spark(sx, sy, 8,
                            LASER if s["k"] in ("laser", "pellet") else ROPE, 240, k)
+                # a bullet knocks one aside rather than clearing the area, and
+                # is throttled so a minigun burst cannot flood Explorer
+                if hit_t["kind"] == "icon" and self.time - self.shove_at > .2:
+                    self.shove_at = self.time
+                    self.blast_icons(sx, sy, 76, 30 + 40 * k)
             elif floor:
                 self.spark(sx, gy, 5, "#8EA0CC", 150, k)
         self.shots = live

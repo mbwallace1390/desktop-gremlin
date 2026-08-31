@@ -94,6 +94,15 @@ distances the AI opens fire from. At the default scale that is 0.39 against
 0.63, so a weapon tuned by one and aimed by the other falls short — which is
 what made arrows land 100px in front of the target.
 
+**The body is `BODY`, and mood is the halo.** `Fighter.body()` is the black
+every figure is drawn in; `Fighter.color()` is the mood colour, and it now only
+reaches the halo, the speech bubble and the grab rings. The halo is free because
+a Tk oval carries a fill AND an outline in the same canvas item — outlining the
+limbs the same way needs a second line under each one, measured at ten of them
+as +168 items and +25% of the frame. `FACE` is light because it is drawn on top
+of the black head; it used to be near-black on a coloured one, which is why the
+per-mood expressions were invisible.
+
 **Every new drawing call has to pick a layer.** Canvas items are pooled and
 reused rather than recreated, and Tk draws in creation order, so stacking comes
 from `_frame_end()` raising the layer tags in a fixed sequence. A `self.line()`

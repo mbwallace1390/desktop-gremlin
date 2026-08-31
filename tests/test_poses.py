@@ -97,6 +97,43 @@ print("limb samples checked  : %d across %d states, both facings" % (checked, le
 print("non-finite or flung   : %d" % len(bad))
 print("upright poses with a backward knee: %s"
       % (sorted(set(wrong)) or "none"))
+
+# The body must be one colour for everyone in every mood, and the halo must be
+# the thing that moves. Getting that backwards is the whole point of the
+# redesign and nothing else in the suite would notice. Its own list, because
+# the geometry summary above prints len(bad).
+halo_bad = []
+halos, bodies = set(), set()
+for kind in gm.ROSTER:
+    for mood in gm.MOODS:
+        f.become(kind)
+        # draw() takes the mood as an argument and would otherwise overwrite it
+        draw("idle", 0.0, mood=mood)
+        tb, th = app._ftag[0][0], app._ftag[0][1]
+        bodies.add(app.canvas.itemcget(app._pool[tb]["line"][0], "fill"))
+        head = app._pool[th]["oval"][0]
+        halos.add((kind, mood, app.canvas.itemcget(head, "outline")))
+        if app.canvas.itemcget(head, "fill") != gm.BODY:
+            halo_bad.append("%s/%s head is not the body colour" % (kind, mood))
+        if float(app.canvas.itemcget(head, "width")) < 3:
+            halo_bad.append("%s/%s halo is only %s thick"
+                            % (kind, mood, app.canvas.itemcget(head, "width")))
+f.become(gm.ROSTER[0])
+per_mood = len({h[2] for h in halos if h[1] == "furious"})
+per_kind = len({h[2] for h in halos if h[0] == gm.ROSTER[0]})
+if len(bodies) != 1:
+    halo_bad.append("the body is not one colour: %s" % sorted(bodies))
+if per_mood < len(gm.ROSTER):
+    halo_bad.append("only %d of %d characters have their own furious halo"
+                    % (per_mood, len(gm.ROSTER)))
+if per_kind < len(gm.MOODS):
+    halo_bad.append("only %d of %d moods change the halo"
+                    % (per_kind, len(gm.MOODS)))
+print("body colour           : %s for all %d, in every mood"
+      % (sorted(bodies)[0], len(gm.ROSTER)))
+print("halo                  : %d moods x %d characters, all distinct"
+      % (per_kind, per_mood))
+bad.extend(halo_bad)
 if wrong:
     bad.append("backward knee in: %s" % sorted(set(wrong)))
 for b in bad[:5]:

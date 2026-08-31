@@ -156,7 +156,16 @@ Turn the lot off with **react_to_windows**.
 
 ## Moods
 
-**bored → hyped → furious → smug → sulking**, in colour, posture and face.
+**bored → hyped → furious → smug → sulking**, and asleep.
+
+The figures themselves are black. Mood is the **halo round the head** — amber
+when hyped, red when furious, dim when asleep — plus posture and the face, which
+is drawn light so you can actually read it. Every mood has its own eyes and
+mouth: furious brows, a hyped grin, a smug smirk, X eyes when knocked out.
+
+The halo tells you who as well as how they feel: each character shifts its own
+base colour through the moods, so the Brawler's furious is not the Sniper's.
+
 Left alone too long, boredom curdles into a rampage. They also flare up for no
 reason. Once you've been away five minutes they curl up and sleep.
 

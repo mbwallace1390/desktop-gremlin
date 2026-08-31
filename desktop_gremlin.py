@@ -1182,7 +1182,11 @@ def ik(ax, ay, bx, by, l1, l2, bend):
 KEY = "#010101"           # this exact color is invisible AND click-through
 # Mood colours are per character now and derived from each one's base colour:
 # see MOODS, BASECOL and PALETTES with the rest of the cast further down.
-INK = "#0B0F22"
+BODY = "#0A0A0C"          # the figures themselves; the halo carries the mood
+# The face sits ON the black head, so it has to be light -- it used to be a
+# near-black ink on a coloured head, which is why you could barely read it.
+# Every mood already draws a different face; this is what makes that visible.
+FACE = "#E8EDFF"
 ROPE = "#E9D9A9"
 LASER = "#7FE7FF"
 FIRE = "#FFB259"
@@ -1873,7 +1877,13 @@ class Fighter:
             self.yell(m, 1.6)
 
     def color(self):
+        """His mood, as a colour. The halo round his head, the speech bubble
+        and the grab rings; no longer the body."""
         return self.pal.get(self.mood, "#F2F5FF")
+
+    def body(self):
+        """Everyone is the same black. Identity and mood live in the halo."""
+        return BODY
 
     def K(self):
         return self.sc / 1.75
@@ -3316,15 +3326,15 @@ class App:
             self.canvas.itemconfigure(it, fill=col, width=max(1, w),
                                       state="normal")
 
-    def dot(self, x, y, r, col, outline=""):
+    def dot(self, x, y, r, col, outline="", w=1):
         x -= self.ox + self.sx
         y -= self.oy + self.sy
         it = self._item("oval")
         self.canvas.coords(it, x - r, y - r, x + r, y + r)
-        key = (col, outline, 1)
+        key = (col, outline, w)
         if self._opt.get(it) != key:
             self._opt[it] = key
-            self.canvas.itemconfigure(it, fill=col, outline=outline, width=1,
+            self.canvas.itemconfigure(it, fill=col, outline=outline, width=w,
                                       state="normal")
 
     def ring(self, x, y, r, col, w):
@@ -3646,19 +3656,24 @@ class App:
         elbL = ik(neck[0], neck[1] - 1, hL[0], hL[1], 13, 13, 1)
         elbR = ik(neck[0], neck[1] - 1, hR[0], hR[1], 13, 13, 1)
 
+        dark = f.body()
         self.layer(tb)
-        self.line((*P(px, py), *P(*kneeL), *P(*fL)), col, lw)
-        self.line((*P(px, py), *P(*kneeR), *P(*fR)), col, lw)
-        self.line((*P(neck[0], neck[1] - 1), *P(*elbL), *P(*hL)), col, lw)
-        self.line((*P(px, py), *P(*neck)), col, lw + 1)
+        self.line((*P(px, py), *P(*kneeL), *P(*fL)), dark, lw)
+        self.line((*P(px, py), *P(*kneeR), *P(*fR)), dark, lw)
+        self.line((*P(neck[0], neck[1] - 1), *P(*elbL), *P(*hL)), dark, lw)
+        self.line((*P(px, py), *P(*neck)), dark, lw + 1)
 
+        # A Tk oval carries a fill AND an outline in the same canvas item, so
+        # the halo is free: no extra item, no extra frame time. Outlining every
+        # limb the same way would need a second line under each one -- measured
+        # at ten of them, +168 items and +25% of the frame.
         hxp, hyp = P(*head)
         self.layer(th)
-        self.dot(hxp, hyp, 11.5 * S, col)
+        self.dot(hxp, hyp, 11.5 * S, dark, col, max(3, round(5.0 * S)))
         self.layer(tf)
         self.draw_face(f, hxp, hyp, S, lean + tilt)
         self.layer(ta)
-        self.line((*P(neck[0], neck[1] - 1), *P(*elbR), *P(*hR)), col, lw)
+        self.line((*P(neck[0], neck[1] - 1), *P(*elbR), *P(*hR)), dark, lw)
         self.draw_weapon(f, P, hR, elbR, hL, tw, twd)
 
     def draw_face(self, f, cx, cy, e, tilt):
@@ -3671,41 +3686,41 @@ class App:
 
         w = max(1, round(1.9 * e))
         if f.state == "sleep" or f.mood == "asleep":
-            self.line((*pt(-5.4, -1.4), *pt(-1.0, -1.4)), INK, w)
-            self.line((*pt(1.0, -1.4), *pt(5.4, -1.4)), INK, w)
-            self.line((*pt(-3, 5), *pt(3, 5)), INK, w)
+            self.line((*pt(-5.4, -1.4), *pt(-1.0, -1.4)), FACE, w)
+            self.line((*pt(1.0, -1.4), *pt(5.4, -1.4)), FACE, w)
+            self.line((*pt(-3, 5), *pt(3, 5)), FACE, w)
             return
         if f.state == "ko":
             for sx in (3.7, -3.3):
-                self.line((*pt(sx - 2.4, -4.2), *pt(sx + 2.4, .6)), INK, w)
-                self.line((*pt(sx + 2.4, -4.2), *pt(sx - 2.4, .6)), INK, w)
-            self.line((*pt(-3.4, 5.2), *pt(3.4, 5.2)), INK, w)
+                self.line((*pt(sx - 2.4, -4.2), *pt(sx + 2.4, .6)), FACE, w)
+                self.line((*pt(sx + 2.4, -4.2), *pt(sx - 2.4, .6)), FACE, w)
+            self.line((*pt(-3.4, 5.2), *pt(3.4, 5.2)), FACE, w)
             return
 
         if f.blink < 0:
-            self.line((*pt(.7 + lookx, -1.7), *pt(6.2 + lookx, -1.7)), INK, w)
-            self.line((*pt(-6.2 + lookx, -1.7), *pt(-1.7 + lookx, -1.7)), INK, w)
+            self.line((*pt(.7 + lookx, -1.7), *pt(6.2 + lookx, -1.7)), FACE, w)
+            self.line((*pt(-6.2 + lookx, -1.7), *pt(-1.7 + lookx, -1.7)), FACE, w)
         else:
             eo = 1.4 if f.mood == "furious" else 0
             for ex in (3.7, -3.3):
-                self.dot(*pt(ex + lookx, -1.8 + eo), max(1.1, 2.2 * e), INK)
+                self.dot(*pt(ex + lookx, -1.8 + eo), max(1.1, 2.2 * e), FACE)
 
         m = f.mood
         if m == "furious":
-            self.line((*pt(-6.5, -6.5), *pt(-1.0, -4.2)), INK, w)
-            self.line((*pt(6.5, -6.5), *pt(1.0, -4.2)), INK, w)
-            self.line((*pt(-4, 5.4), *pt(0, 2.8), *pt(4, 5.4)), INK, w)
+            self.line((*pt(-6.5, -6.5), *pt(-1.0, -4.2)), FACE, w)
+            self.line((*pt(6.5, -6.5), *pt(1.0, -4.2)), FACE, w)
+            self.line((*pt(-4, 5.4), *pt(0, 2.8), *pt(4, 5.4)), FACE, w)
         elif m == "hyped":
-            self.line((*pt(-4.2, 1.6), *pt(0, 6.2), *pt(4.2, 1.6)), INK, w)
+            self.line((*pt(-4.2, 1.6), *pt(0, 6.2), *pt(4.2, 1.6)), FACE, w)
         elif m == "smug":
-            self.line((*pt(-4, 4.4), *pt(.5, 6.4), *pt(4.2, 3.0)), INK, w)
-            self.line((*pt(1.0, -6.2), *pt(6.4, -7.4)), INK, w)
+            self.line((*pt(-4, 4.4), *pt(.5, 6.4), *pt(4.2, 3.0)), FACE, w)
+            self.line((*pt(1.0, -6.2), *pt(6.4, -7.4)), FACE, w)
         elif m == "sulking":
-            self.line((*pt(-3.6, 5.6), *pt(0, 3.4), *pt(3.6, 5.6)), INK, w)
-            self.line((*pt(-6.4, -5.6), *pt(-1.6, -6.6)), INK, w)
-            self.line((*pt(6.4, -5.6), *pt(1.6, -6.6)), INK, w)
+            self.line((*pt(-3.6, 5.6), *pt(0, 3.4), *pt(3.6, 5.6)), FACE, w)
+            self.line((*pt(-6.4, -5.6), *pt(-1.6, -6.6)), FACE, w)
+            self.line((*pt(6.4, -5.6), *pt(1.6, -6.6)), FACE, w)
         else:
-            self.line((*pt(-3.2, 4.6), *pt(3.2, 4.6)), INK, w)
+            self.line((*pt(-3.2, 4.6), *pt(3.2, 4.6)), FACE, w)
 
     def draw_weapon(self, f, P, hR, elbR, hL, tw, twd):
         st, S = f.state, f.sc

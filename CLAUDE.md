@@ -103,11 +103,16 @@ applications or windows you use is written to disk — the context in `Watcher`
 lives in RAM and dies with the process. Settings has a "forget everything"
 button. Keep it that way.
 
-**They can leave the screen.** The walls sit 300px outside it. A five second
-leash in `update_fighter` walks anyone lingering out of view back in, and a
-ledge cooldown stops them re-grabbing the lip they just left. There used to be
-a hard ceiling 18px down, which put the top row of desktop icons *above* it and
-trapped them there in a grab-jump-bounce loop indefinitely.
+**The screen wraps sideways.** Off one edge and back on the other, keeping
+height and speed. Two things send a fighter round: getting `WRAP` past the edge,
+or being out of sight for `OUT_MAX` at all. The second one matters more than it
+looks -- without it a duel settles a few pixels past the edge, never travels far
+enough to trigger, and carries on where you cannot see it. He lands just INSIDE
+the far edge, because landing outside lets an idle fighter wrap, sit out of
+sight, and wrap again forever. There is no wall any more, so `wallslide` is
+currently an unreachable state. There used to be a hard ceiling 18px down, which
+put the top row of desktop icons *above* it and trapped them there in a
+grab-jump-bounce loop indefinitely; a ledge cooldown stops the re-grab.
 
 **Shots meant for the other fighter pass over the desktop.** `f.at_foe` is set
 in `start_attack` and becomes `pierce` on the projectile. Without it a row of

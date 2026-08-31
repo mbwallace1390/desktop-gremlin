@@ -120,20 +120,34 @@ for i in range(len(app.fighters)):
         cur = cur + 1 if out else 0
         longest_all = max(longest_all, cur)
 
+# A wrap is the only way x can move most of a screen width in one frame.
+wraps = 0
+for i in range(len(app.fighters)):
+    for j in range(1, FRAMES):
+        if abs(hist[i][j][0] - hist[i][j - 1][0]) > app.W * 0.5:
+            wraps += 1
+
 print()
 print("stuck windows (locomotion states, <60px in 8s): %d" % len(bad))
 for b in bad[:3]:
     print("    fighter %d at t=%.0fs in %s, %.0f px, around (%.0f, %.0f)"
           % (b[0], b[1], b[3], b[2], b[4], b[5]))
 print("went off screen        : %d times over 3 minutes" % trips_total)
-print("longest spell away     : %.1fs (leash pulls them back at 5s)"
-      % (longest_all / 40.0))
+print("wrapped to the far side: %d times" % wraps)
+print("longest spell away     : %.1fs (wraps at %.0fpx out or %.1fs out)"
+      % (longest_all / 40.0, gm.WRAP, gm.OUT_MAX))
 print("all back on screen now : %s" % came_back)
+if wraps == 0:
+    bad.append("never wrapped to the other side in three minutes")
+if longest_all / 40.0 > 3:
+    bad.append("spent %.1fs off screen in one go" % (longest_all / 40.0))
 
-ok = not bad and trips_total > 0 and longest_all / 40.0 < 25
+ok = not bad and trips_total > 0
 print()
-print("VERDICT: %s" % ("PASS - roams freely, leaves and returns"
+print("VERDICT: %s" % ("PASS - roams freely, and comes back on the far side"
                        if ok else "FAIL"))
+for b in bad:
+    print("   %s" % (b,))
 try:
     app.tray.remove()
     app.root.destroy()

@@ -24,8 +24,9 @@ git clone https://github.com/mbwallace1390/desktop-gremlin.git
 cd desktop-gremlin
 ```
 
-Then double-click **`run_gremlin.bat`**. It installs `pywin32` the first time
-and launches them.
+Then double-click **`run_gremlin.bat`**. It installs `pywin32` the first time,
+launches them with `pythonw`, and closes itself - there is no console window
+left behind to keep open. Quit from the tray icon.
 
 Or by hand:
 
@@ -38,8 +39,9 @@ Everything lives on the **tray icon**, bottom-right: Settings, Pause, Bring
 them to my cursor, Restore my icon layout, Quit. Right-clicking a gremlin also
 opens Settings.
 
-Want no console window? `pythonw desktop_gremlin.py`, or tick *Start with
-Windows* in Settings.
+Running `python desktop_gremlin.py` by hand keeps a console, and closing it
+kills them - that console is their parent process. Use `pythonw
+desktop_gremlin.py` instead, or just use the .bat.
 
 ---
 

@@ -36,10 +36,15 @@ try:
     import win32gui
     import win32process
 except ImportError:
-    print("\n  Missing dependency: pywin32\n")
-    print("  Fix it with:   python -m pip install pywin32\n")
+    _msg = ("Desktop Gremlin needs pywin32.\n\n"
+            "Install it with:   python -m pip install pywin32")
+    print("\n  " + _msg + "\n")
     try:
-        input("  Press Enter to close...")
+        if sys.stdin is not None:
+            input("  Press Enter to close...")
+        else:
+            # launched with pythonw: no console to read that in
+            ctypes.windll.user32.MessageBoxW(0, _msg, "Desktop Gremlin", 0x10)
     except Exception:
         pass
     sys.exit(1)
@@ -2851,6 +2856,16 @@ class App:
 TERRAIN_HZ = 1.6
 
 
+def fatal(msg):
+    """Say it in a box. Launched with pythonw there is no console, and a
+    crash that prints into the void looks like nothing happened at all."""
+    print(msg)
+    try:
+        user32.MessageBoxW(0, msg, "Desktop Gremlin", 0x10)
+    except Exception:
+        pass
+
+
 def main():
     print("=" * 60)
     print(f"  DESKTOP GREMLIN v{VERSION} — overlay edition")
@@ -2886,8 +2901,29 @@ def main():
     print("  Grab one: hover until the rings appear, then click and drag.")
     print("  Right-click one to open Settings.")
     print()
+
+    # None of the above is readable when we are started with pythonw, so
+    # anything that actually needs attention goes to the tray as well.
+    notes = []
+    if n_i == 0:
+        notes.append("Can't read your desktop icons - using your open "
+                     "windows and the floor instead.")
+    if app.icons_locked:
+        notes.append("'Auto arrange icons' is on, so Windows snaps every "
+                     "icon back. Right-click desktop > View > untick it.")
+    if state == "failed":
+        notes.append("No layout backup saved, so icon dragging stays off.")
+    if notes:
+        app.tray.notify("Desktop Gremlin", "\n".join(notes))
+
     app.run()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        fatal("Desktop Gremlin stopped with an error:\n\n"
+              + traceback.format_exc()[-1400:])
+        sys.exit(1)

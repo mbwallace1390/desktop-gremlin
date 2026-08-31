@@ -114,6 +114,15 @@ currently an unreachable state. There used to be a hard ceiling 18px down, which
 put the top row of desktop icons *above* it and trapped them there in a
 grab-jump-bounce loop indefinitely; a ledge cooldown stops the re-grab.
 
+**The weapon he fires is the weapon he closed the distance for.** The fight
+state walks him to `REACH[f.plan]`, so `start_attack` must use `f.plan` and
+nothing else. It used to swap in a random other weapon half the time, which
+left him standing at lightning range swinging a sword: every chainsaw swing and
+9 in 10 sword swings were thrown from outside their own reach, and only
+lightning appeared to work -- it is instant, and was only ever fired when it was
+also the plan. Variety comes from re-rolling `f.plan` *between* attacks, where
+the fight state still gets a chance to close the new distance.
+
 **Shots meant for the other fighter pass over the desktop.** `f.at_foe` is set
 in `start_attack` and becomes `pierce` on the projectile. Without it a row of
 icons between them soaks up every round. Shots aimed *at* an icon still hit it,

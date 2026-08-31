@@ -90,6 +90,27 @@ kernel32.WriteProcessMemory.argtypes = [wt.HANDLE, ctypes.c_void_p, ctypes.c_voi
                                         ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
 kernel32.CloseHandle.argtypes = [wt.HANDLE]
 
+# A cross-process SendMessage blocks until Explorer answers it. If Explorer is
+# busy — or hung — that stalls our whole frame loop with it, so every LVM_*
+# call goes through a timeout instead.
+SMTO_ABORTIFHUNG = 0x0002
+user32.SendMessageTimeoutW.restype = wt.LPARAM
+user32.SendMessageTimeoutW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM,
+                                       wt.UINT, wt.UINT,
+                                       ctypes.POINTER(ctypes.c_size_t)]
+
+
+def send_msg(hwnd, msg, wparam, lparam, timeout=250):
+    """SendMessage that cannot wedge the frame loop. None on failure/timeout."""
+    res = ctypes.c_size_t(0)
+    try:
+        ok = user32.SendMessageTimeoutW(wt.HWND(hwnd), msg, wt.WPARAM(wparam),
+                                        wt.LPARAM(lparam), SMTO_ABORTIFHUNG,
+                                        timeout, ctypes.byref(res))
+    except Exception:
+        return None
+    return int(res.value) if ok else None
+
 # ==========================================================================
 #  SETTINGS
 # ==========================================================================
@@ -249,6 +270,8 @@ class ShellView:
         self.lv = None
         self.proc = None
         self.remote = None
+        self._names = {}        # index -> label; reading one is the slow call
+        self._names_n = -1
 
     def open(self):
         lv = find_desktop_listview()
@@ -284,6 +307,8 @@ class ShellView:
         except Exception:
             pass
         self.proc = self.remote = None
+        self._names.clear()
+        self._names_n = -1
 
     # -- low level ---------------------------------------------------------
     def _write(self, obj, off=0):
@@ -299,16 +324,14 @@ class ShellView:
                                           ctypes.byref(n))
 
     def count(self):
-        try:
-            return int(win32gui.SendMessage(self.lv, LVM_GETITEMCOUNT, 0, 0) or 0)
-        except Exception:
-            return 0
+        return send_msg(self.lv, LVM_GETITEMCOUNT, 0, 0) or 0
 
     def item_rect(self, i):
         """Icon glyph rect in SCREEN pixels."""
         r = wt.RECT(LVIR_ICON, 0, 0, 0)
         self._write(r)
-        win32gui.SendMessage(self.lv, LVM_GETITEMRECT, i, self.remote)
+        if send_msg(self.lv, LVM_GETITEMRECT, i, self.remote) is None:
+            return None
         self._read(r)
         if r.right <= r.left or r.bottom <= r.top:
             return None
@@ -323,18 +346,14 @@ class ShellView:
         """Position in LIST coordinates — what SETITEMPOSITION32 expects."""
         p = wt.POINT(0, 0)
         self._write(p)
-        win32gui.SendMessage(self.lv, LVM_GETITEMPOSITION, i, self.remote)
+        send_msg(self.lv, LVM_GETITEMPOSITION, i, self.remote)
         self._read(p)
         return (p.x, p.y)
 
     def set_item_pos(self, i, x, y):
         p = wt.POINT(int(x), int(y))
         self._write(p)
-        try:
-            win32gui.SendMessage(self.lv, LVM_SETITEMPOSITION32, i, self.remote)
-            return True
-        except Exception:
-            return False
+        return send_msg(self.lv, LVM_SETITEMPOSITION32, i, self.remote) is not None
 
     def item_text(self, i):
         try:
@@ -346,7 +365,8 @@ class ShellView:
             it.pszText = self.remote + off
             it.cchTextMax = 260
             self._write(it)
-            win32gui.SendMessage(self.lv, LVM_GETITEMTEXTW, i, self.remote)
+            if send_msg(self.lv, LVM_GETITEMTEXTW, i, self.remote) is None:
+                return ""
             buf = ctypes.create_unicode_buffer(260)
             n = ctypes.c_size_t(0)
             kernel32.ReadProcessMemory(self.proc, self.remote + off, buf, 520,
@@ -357,16 +377,29 @@ class ShellView:
 
     # -- the useful bits ---------------------------------------------------
     def read_icons(self):
-        """[(name, l, t, r, b, index), ...] in screen pixels."""
+        """[(name, l, t, r, b, index), ...] in screen pixels.
+
+        Labels are cached. Fetching one is a whole second cross-process round
+        trip per icon and they only ever feed the jokes, so the cache is kept
+        until the item count changes — a rename shows up on the next add or
+        delete."""
         if not self.open():
             return []
-        out = []
         n = min(self.count(), 400)
+        if n != self._names_n:
+            self._names.clear()
+            self._names_n = n
+        names = self._names
+        out = []
         for i in range(n):
             rect = self.item_rect(i)
             if not rect:
                 continue
-            out.append((self.item_text(i) or "icon",) + rect + (i,))
+            nm = names.get(i)
+            if nm is None:
+                nm = self.item_text(i) or "icon"
+                names[i] = nm
+            out.append((nm,) + rect + (i,))
         return out
 
     def snapshot(self):
@@ -393,7 +426,7 @@ class ShellView:
                 if self.set_item_pos(i, x, y):
                     done += 1
         try:
-            win32gui.SendMessage(self.lv, LVM_REDRAWITEMS, 0, max(0, self.count() - 1))
+            send_msg(self.lv, LVM_REDRAWITEMS, 0, max(0, self.count() - 1))
             win32gui.InvalidateRect(self.lv, None, True)
         except Exception:
             pass
@@ -402,10 +435,16 @@ class ShellView:
 
 SHELL = ShellView()
 
+# No backup on disk means no undo, so nothing may be dragged. Set by
+# backup_layout(); read by App.can_move_icons() and the settings window.
+BACKUP_OK = False
+
 
 def backup_layout():
     """Write the icon layout once, the first time we ever run."""
+    global BACKUP_OK
     if os.path.exists(BACKUP_PATH):
+        BACKUP_OK = True
         return "existing"
     snap = SHELL.snapshot()
     if not snap:
@@ -414,6 +453,7 @@ def backup_layout():
         with open(BACKUP_PATH, "w", encoding="utf-8") as f:
             json.dump({"saved": time.strftime("%Y-%m-%d %H:%M:%S"), "icons": snap},
                       f, indent=1)
+        BACKUP_OK = True
         return "saved"
     except Exception as exc:
         print("layout backup failed:", exc)
@@ -671,7 +711,10 @@ class Tray:
                     flags |= win32con.MF_CHECKED
                 win32gui.AppendMenu(menu, flags, self.ID_BASE + i, label)
         pos = win32gui.GetCursorPos()
-        win32gui.SetForegroundWindow(self.hwnd)
+        try:
+            win32gui.SetForegroundWindow(self.hwnd)
+        except Exception:
+            pass
         win32gui.TrackPopupMenu(menu, win32con.TPM_LEFTALIGN | win32con.TPM_RIGHTBUTTON,
                                 pos[0], pos[1], 0, self.hwnd, None)
         win32gui.PostMessage(self.hwnd, win32con.WM_NULL, 0, 0)
@@ -752,12 +795,14 @@ class SettingsWindow:
             nonlocal row
             v = tk.BooleanVar(value=bool(CFG[key]))
             self.vars[key] = v
-            tk.Checkbutton(self.win, text=label, variable=v, bg="#171B2C",
-                           fg="#E6ECFF", selectcolor="#0E1120", activebackground="#171B2C",
-                           activeforeground="#FFFFFF", font=("Segoe UI", 9),
-                           highlightthickness=0, bd=0).grid(
-                row=row, column=0, columnspan=2, sticky="w", padx=12, pady=2)
+            cb = tk.Checkbutton(self.win, text=label, variable=v, bg="#171B2C",
+                                fg="#E6ECFF", selectcolor="#0E1120",
+                                activebackground="#171B2C",
+                                activeforeground="#FFFFFF", font=("Segoe UI", 9),
+                                highlightthickness=0, bd=0)
+            cb.grid(row=row, column=0, columnspan=2, sticky="w", padx=12, pady=2)
             row += 1
+            return cb
 
         header("Look")
         slider("scale", "Size  (0.68 = icon height)", 0.35, 2.5, 0.01)
@@ -771,7 +816,12 @@ class SettingsWindow:
         slider("idle_minutes", "Minutes before sleeping", 0.5, 60, 0.5)
 
         header("Your desktop")
-        check("move_icons", "Let them actually drag my desktop icons")
+        drag = check("move_icons", "Let them actually drag my desktop icons")
+        if not BACKUP_OK:
+            # Nothing to put the icons back with, so the switch stays off.
+            self.vars["move_icons"].set(False)
+            drag.config(state="disabled", disabledforeground="#6C7BB0",
+                        text="Drag my desktop icons  (no layout backup — off)")
         check("all_monitors", "Use all monitors  (restart to apply)")
         check("start_with_windows", "Start with Windows")
 
@@ -886,6 +936,7 @@ class Terrain:
         self.windows = []     # (title, l, t, r, b, hwnd)
         self.platforms = []   # (x0, x1, y, kind, key)
         self._targets = []
+        self.bounds = []      # (cx, cy, half_w, half_h, target) for hit tests
         self.win_pos = {}     # hwnd -> (l, t) last seen, for riding
         self.moved = {}       # hwnd -> (dx, dy) since last refresh
         self.last = 0.0
@@ -924,6 +975,10 @@ class Terrain:
             pl.append((l + 6, r - 6, t, "window", hwnd))
         self._targets = tg
         self.platforms = pl
+        # Flat tuples: the projectile loop walks these on every single frame,
+        # and a tuple unpack beats four dict lookups per test.
+        self.bounds = [(t["cx"], t["cy"], t["w"] / 2, max(t["h"], 26) / 2, t)
+                       for t in tg]
 
     def targets(self):
         return self._targets
@@ -1145,6 +1200,19 @@ class App:
         self.asleep = False
         self.icons_locked = False
 
+        # Canvas item pool. Items are moved and recoloured frame to frame
+        # instead of being deleted and rebuilt. Tk draws in creation order, so
+        # every item carries a layer tag and _frame_end() raises those tags in a
+        # fixed sequence — that, not call order, is what fixes the stacking.
+        self._pool = {}       # tag -> {kind: [item ids]}
+        self._used = {}       # tag -> {kind: how many this frame}
+        self._prev = {}       # tag -> {kind: how many last frame}
+        self._opt = {}        # item id -> options last applied, None if hidden
+        self._layer = "part"
+        self._layers = []
+        self._ftag = []
+        self._rtag = []
+
         self.fighters = []
         self.spawn_fighters()
 
@@ -1185,6 +1253,30 @@ class App:
             self.fighters[1].foe = self.fighters[0]
         else:
             self.fighters[0].foe = None
+        self._build_layers()
+
+    def _build_layers(self):
+        """The draw order, as tags. _frame_end() raises them in this sequence,
+        so a rope drawn before a fighter still ends up behind him however the
+        pools happened to grow."""
+        seq = ["dbg", "boom", "bolt", "part", "shot", "shotd", "slash"]
+        self._rtag = []
+        for i in range(len(self.fighters)):
+            self._rtag.append(("rope%d" % i, "roped%d" % i))
+            seq.extend(self._rtag[i])
+        seq.append("hover")
+        self._ftag = []
+        for i in range(len(self.fighters)):
+            # body, head, face, right arm, weapon, weapon dots,
+            # then overlay: cargo/health, speech box, speech text
+            self._ftag.append(("b%d" % i, "h%d" % i, "f%d" % i, "a%d" % i,
+                               "w%d" % i, "wd%d" % i,
+                               "o%d" % i, "ob%d" % i, "ot%d" % i))
+        for t in self._ftag:
+            seq.extend(t[:6])
+        for t in self._ftag:
+            seq.extend(t[6:])
+        self._layers = seq
 
     def apply_settings(self):
         for f in self.fighters:
@@ -1342,7 +1434,8 @@ class App:
     #  icon carrying — the real ones, really moved
     # ==================================================================
     def can_move_icons(self):
-        return CFG["move_icons"] and not self.icons_locked and self.terrain.icons_ok
+        return (CFG["move_icons"] and BACKUP_OK and not self.icons_locked
+                and self.terrain.icons_ok)
 
     def pick_up_icon(self, f, tgt):
         if not self.can_move_icons() or f.carry or tgt.get("kind") != "icon":
@@ -1537,7 +1630,7 @@ class App:
     def hit_target(self, f, t, fx, fy):
         self.spark(fx, fy, 10, "#CFD8F5", 260, f.K())
         f.hits += 1
-        need = 1 if (t.get("kind") == "icon" and getattr(f, "snatch", False)) \
+        need = 1 if (t.get("kind") == "icon" and f.snatch) \
             else (4 if t.get("kind") == "window" else 3)
         if f.hits >= need:
             f.hits = 0
@@ -1640,8 +1733,6 @@ class App:
             f.stun -= dt
         f.squash = approach(f.squash, 0, dt * 4.5)
         f.skid = max(0.0, f.skid - dt * 3)
-        if not hasattr(f, "mode"):
-            f.mode = "roam"
         K = f.K()
 
         if self.asleep and f.state not in ("sleep", "grabbed", "thrown", "ko"):
@@ -1723,7 +1814,7 @@ class App:
             d = f.wander_to - f.x
             f.face = 1 if d >= 0 else -1
             if abs(d) < 16 or f.st > 9:
-                self.drop_icon(f, (f.x, getattr(f, "carry_dest_y", f.y - 60)))
+                self.drop_icon(f, (f.x, f.carry_dest_y))
                 f.set_mood("smug")
                 f.set_state("idle")
                 f.goal = self.time + .8
@@ -1996,7 +2087,6 @@ class App:
 
         if self.time - self.terrain.last > TERRAIN_HZ:
             self.terrain.last = self.time
-            old = {(t["kind"], t["key"]): t for t in self.terrain.targets()}
             self.terrain.refresh(self.hwnd, want_icons=not self.asleep)
             new = {(t["kind"], t["key"]): t for t in self.terrain.targets()}
             for f in self.fighters:
@@ -2011,7 +2101,6 @@ class App:
                     if f.target is None and f.state == "hunt":
                         f.set_state("idle")
                         f.goal = self.time + .3
-            del old
 
         if CFG["react_to_windows"] and not self.asleep:
             fg = foreground_window()
@@ -2039,7 +2128,12 @@ class App:
         self.fx_tick(dt)
 
     def projectiles(self, dt):
-        for s in self.shots[:]:
+        # Rebuilt rather than removed from in place: list.remove() on a dict is a
+        # linear scan with a full dict comparison at every step, and a minigun
+        # burst plus a bomb can retire a dozen shots in one frame.
+        live = []
+        bounds = self.terrain.bounds
+        for s in self.shots:
             s["life"] -= dt
             s["vy"] += s["g"] * dt
             s["x"] += s["vx"] * dt
@@ -2055,53 +2149,66 @@ class App:
                 s["spin"] = math.atan2(s["vy"], s["vx"])
                 self.puff(s["x"], s["y"], 1, "#C9D3F0", k * .8, 3)
 
+            sx, sy = s["x"], s["y"]
             hit_t = None
-            for t in self.terrain.targets():
-                if abs(s["x"] - t["cx"]) < t["w"] / 2 and \
-                        abs(s["y"] - t["cy"]) < max(t["h"], 26) / 2:
+            for cx, cy, hw, hh, t in bounds:
+                if -hw < sx - cx < hw and -hh < sy - cy < hh:
                     hit_t = t
                     break
             hit_f = None
             for f in self.fighters:
                 if f is s["owner"] or f.hp <= 0:
                     continue
-                if abs(s["x"] - f.x) < 18 * f.sc and \
-                        f.y - 80 * f.sc < s["y"] < f.y + 8:
+                if abs(sx - f.x) < 18 * f.sc and f.y - 80 * f.sc < sy < f.y + 8:
                     hit_f = f
                     break
 
-            gy = self.ground_at(s["x"])
-            floor = s["y"] >= gy
-            gone = s["life"] <= 0 or not (self.ox - 60 < s["x"] < self.ox + self.W + 60)
-            if hit_t or hit_f or floor or gone:
-                if s["k"] in ("bomb", "rocket"):
-                    big = s["k"] == "rocket"
-                    self.boom(s["x"], min(s["y"], gy), 70 if big else 56, k, big)
-                    rad = (150 if big else 110) * (.5 + .5 * k)
-                    for t in self.terrain.targets():
-                        if dist(s["x"], s["y"], t["cx"], t["cy"]) < rad:
-                            self.hit_target(s["owner"], t, s["x"], s["y"])
-                            break
-                    for f in self.fighters:
-                        if f is not s["owner"] and f.hp > 0 and \
-                                dist(s["x"], s["y"], f.x, f.y - 30 * f.sc) < rad:
-                            self.hit_fighter(s["owner"], f, 26 if big else 18)
-                elif hit_f:
-                    self.hit_fighter(s["owner"], hit_f,
-                                     {"arrow": 10, "laser": 13, "pellet": 4}.get(s["k"], 8))
-                elif hit_t:
-                    self.hit_target(s["owner"], hit_t, s["x"], s["y"])
-                    self.spark(s["x"], s["y"], 8,
-                               LASER if s["k"] in ("laser", "pellet") else ROPE, 240, k)
-                elif floor:
-                    self.spark(s["x"], gy, 5, "#8EA0CC", 150, k)
-                self.shots.remove(s)
+            gy = self.ground_at(sx)
+            floor = sy >= gy
+            gone = s["life"] <= 0 or not (self.ox - 60 < sx < self.ox + self.W + 60)
+            if not (hit_t or hit_f or floor or gone):
+                live.append(s)
+                continue
+
+            if s["k"] in ("bomb", "rocket"):
+                big = s["k"] == "rocket"
+                self.boom(sx, min(sy, gy), 70 if big else 56, k, big)
+                rad = (150 if big else 110) * (.5 + .5 * k)
+                rad2 = rad * rad
+                for cx, cy, _hw, _hh, t in bounds:
+                    if (cx - sx) ** 2 + (cy - sy) ** 2 < rad2:
+                        self.hit_target(s["owner"], t, sx, sy)
+                        break
+                for f in self.fighters:
+                    if f is not s["owner"] and f.hp > 0 and \
+                            dist(sx, sy, f.x, f.y - 30 * f.sc) < rad:
+                        self.hit_fighter(s["owner"], f, 26 if big else 18)
+            elif hit_f:
+                self.hit_fighter(s["owner"], hit_f,
+                                 {"arrow": 10, "laser": 13, "pellet": 4}.get(s["k"], 8))
+            elif hit_t:
+                self.hit_target(s["owner"], hit_t, sx, sy)
+                self.spark(sx, sy, 8,
+                           LASER if s["k"] in ("laser", "pellet") else ROPE, 240, k)
+            elif floor:
+                self.spark(sx, gy, 5, "#8EA0CC", 150, k)
+        self.shots = live
+
+    @staticmethod
+    def _age(lst, dt):
+        """Advance short-lived fx and drop the expired ones."""
+        keep = []
+        for o in lst:
+            o["t"] += dt
+            if o["t"] <= o["life"]:
+                keep.append(o)
+        return keep
 
     def fx_tick(self, dt):
-        for p in self.parts[:]:
+        live = []
+        for p in self.parts:
             p["t"] += dt
             if p["t"] >= p["life"]:
-                self.parts.remove(p)
                 continue
             p["vy"] += p["g"] * dt
             p["x"] += p["vx"] * dt
@@ -2112,13 +2219,13 @@ class App:
                     p["y"] = gy
                     p["vy"] *= -.34
                     p["vx"] *= .7
-        if len(self.parts) > 300:
-            del self.parts[:len(self.parts) - 300]
-        for lst, key in ((self.slashes, "life"), (self.booms, "life"), (self.bolts, "life")):
-            for o in lst[:]:
-                o["t"] += dt
-                if o["t"] > o[key]:
-                    lst.remove(o)
+            live.append(p)
+        if len(live) > 300:
+            del live[:len(live) - 300]
+        self.parts = live
+        self.slashes = self._age(self.slashes, dt)
+        self.booms = self._age(self.booms, dt)
+        self.bolts = self._age(self.bolts, dt)
         if self.shake_t > 0:
             self.shake_t -= dt
             if self.shake_t <= 0:
@@ -2127,51 +2234,159 @@ class App:
     # ==================================================================
     #  drawing
     # ==================================================================
-    def line(self, pts, col, w, **kw):
+    # ---- item pool -------------------------------------------------------
+    def layer(self, tag):
+        """Everything drawn from here on belongs to this layer."""
+        self._layer = tag
+
+    def _make(self, kind, tag):
+        c = self.canvas
+        if kind == "line":
+            return c.create_line(0, 0, 1, 1, capstyle="round",
+                                 joinstyle="round", tags=tag)
+        if kind == "oval":
+            return c.create_oval(0, 0, 1, 1, tags=tag)
+        if kind == "rect":
+            return c.create_rectangle(0, 0, 1, 1, tags=tag)
+        return c.create_text(0, 0, tags=tag)
+
+    def _item(self, kind):
+        """Next free item of this kind in the current layer, made if needed.
+
+        Within one (layer, kind) pool the slots are handed out in call order
+        every frame, and they were created in that same order, so their relative
+        stacking already matches. Only the layers need raising."""
+        tag = self._layer
+        pools = self._pool.get(tag)
+        if pools is None:
+            pools = self._pool[tag] = {}
+            self._used[tag] = {}
+            self._prev[tag] = {}
+        used = self._used[tag]
+        i = used.get(kind, 0)
+        used[kind] = i + 1
+        lst = pools.get(kind)
+        if lst is None:
+            lst = pools[kind] = []
+        if i < len(lst):
+            return lst[i]
+        item = self._make(kind, tag)
+        lst.append(item)
+        return item
+
+    def _frame_begin(self):
+        for used in self._used.values():
+            for kind in used:
+                used[kind] = 0
+
+    def _frame_end(self):
+        c = self.canvas
+        opt = self._opt
+        for tag, pools in self._pool.items():
+            used = self._used[tag]
+            prev = self._prev[tag]
+            for kind, lst in pools.items():
+                u = used.get(kind, 0)
+                p = prev.get(kind, 0)
+                for it in lst[u:p]:
+                    c.itemconfigure(it, state="hidden")
+                    opt[it] = None       # forces a reconfigure when reused
+                prev[kind] = u
+        for tag in self._layers:
+            c.tag_raise(tag)
+
+    def clear_canvas(self):
+        self.canvas.delete("all")
+        self._pool.clear()
+        self._used.clear()
+        self._prev.clear()
+        self._opt.clear()
+
+    # ---- primitives ------------------------------------------------------
+    def line(self, pts, col, w):
         ox, oy = self.ox + self.sx, self.oy + self.sy
         flat = []
         for i in range(0, len(pts) - 1, 2):
             flat += [pts[i] - ox, pts[i + 1] - oy]
-        self.canvas.create_line(*flat, fill=col, width=max(1, w),
-                                capstyle="round", joinstyle="round", **kw)
+        it = self._item("line")
+        self.canvas.coords(it, *flat)
+        key = (col, w)
+        if self._opt.get(it) != key:
+            self._opt[it] = key
+            self.canvas.itemconfigure(it, fill=col, width=max(1, w),
+                                      state="normal")
 
     def dot(self, x, y, r, col, outline=""):
         x -= self.ox + self.sx
         y -= self.oy + self.sy
-        self.canvas.create_oval(x - r, y - r, x + r, y + r, fill=col, outline=outline)
+        it = self._item("oval")
+        self.canvas.coords(it, x - r, y - r, x + r, y + r)
+        key = (col, outline, 1)
+        if self._opt.get(it) != key:
+            self._opt[it] = key
+            self.canvas.itemconfigure(it, fill=col, outline=outline, width=1,
+                                      state="normal")
 
     def ring(self, x, y, r, col, w):
         x -= self.ox + self.sx
         y -= self.oy + self.sy
-        self.canvas.create_oval(x - r, y - r, x + r, y + r, outline=col, width=w)
+        it = self._item("oval")
+        self.canvas.coords(it, x - r, y - r, x + r, y + r)
+        key = ("", col, w)
+        if self._opt.get(it) != key:
+            self._opt[it] = key
+            self.canvas.itemconfigure(it, fill="", outline=col, width=w,
+                                      state="normal")
+
+    def _rect(self, x0, y0, x1, y1, fill, outline, w):
+        """Canvas coordinates, already offset."""
+        it = self._item("rect")
+        self.canvas.coords(it, x0, y0, x1, y1)
+        key = (fill, outline, w)
+        if self._opt.get(it) != key:
+            self._opt[it] = key
+            self.canvas.itemconfigure(it, fill=fill, outline=outline, width=w,
+                                      state="normal")
 
     def box(self, x0, y0, x1, y1, fill, outline="", w=1):
         ox, oy = self.ox + self.sx, self.oy + self.sy
-        self.canvas.create_rectangle(x0 - ox, y0 - oy, x1 - ox, y1 - oy,
-                                     fill=fill, outline=outline, width=w)
+        self._rect(x0 - ox, y0 - oy, x1 - ox, y1 - oy, fill, outline, w)
+
+    def text(self, x, y, txt, col, font):
+        it = self._item("text")
+        self.canvas.coords(it, x, y)
+        key = (txt, col, font)
+        if self._opt.get(it) != key:
+            self._opt[it] = key
+            self.canvas.itemconfigure(it, text=txt, fill=col, font=font,
+                                      anchor="w", state="normal")
+        return it
 
     def draw(self):
-        c = self.canvas
-        c.delete("all")
+        self._frame_begin()
         self.sx = self.sy = 0.0
         if self.shake_t > 0:
             m = self.shake_m * (self.shake_t / .4)
             self.sx, self.sy = random.uniform(-m, m), random.uniform(-m, m)
 
         if DEBUG:
+            self.layer("dbg")
             for x0, x1, py, kind, key in self.terrain.platforms:
                 self.line((x0, py, x1, py), "#3CE0A0" if kind == "icon" else "#5CA8FF", 2)
             for mon, work in self.mons:
                 self.line((work[0], work[3], work[2], work[3]), "#FF5B47", 2)
 
+        self.layer("boom")
         for b in self.booms:
             k = b["t"] / b["life"]
             self.ring(b["x"], b["y"], b["r"] * (.25 + k * 1.15), FIRE,
                       max(1, int(6 * (1 - k)) + 1))
+        self.layer("bolt")
         for bo in self.bolts:
             k = bo["t"] / bo["life"]
             self.line(bo["pts"], BOLT if k < .5 else "#7FE7FF", max(1, int(5 * (1 - k)) + 1))
 
+        self.layer("part")
         for p in self.parts:
             a = 1 - p["t"] / p["life"]
             r = p["r"] * (1 if p["k"] == "chunk" else a)
@@ -2182,12 +2397,17 @@ class App:
             else:
                 self.dot(p["x"], p["y"], r, p["col"])
 
+        # Projectiles stack by part (all shafts, then all tips) rather than by
+        # spawn order — only visible where two projectiles overlap, and a layer
+        # per shot would cost more in raises than the pool saves.
         for s in self.shots:
             k = s["owner"].K()
             if s["k"] == "arrow":
                 a = math.atan2(s["vy"], s["vx"])
                 dx, dy = math.cos(a) * 9, math.sin(a) * 9
+                self.layer("shot")
                 self.line((s["x"] - dx, s["y"] - dy, s["x"] + dx, s["y"] + dy), ROPE, 2)
+                self.layer("shotd")
                 self.dot(s["x"] + dx, s["y"] + dy, 2.2, STEEL)
             elif s["k"] in ("laser", "pellet"):
                 pts = []
@@ -2195,18 +2415,23 @@ class App:
                     pts += [tx, ty]
                 pts += [s["x"], s["y"]]
                 if len(pts) >= 4:
+                    self.layer("shot")
                     self.line(pts, LASER if s["k"] == "laser" else "#FFE7A8",
                               3 if s["k"] == "laser" else 2)
             elif s["k"] == "rocket":
                 a = s["spin"]
                 dx, dy = math.cos(a) * 9, math.sin(a) * 9
+                self.layer("shot")
                 self.line((s["x"] - dx, s["y"] - dy, s["x"] + dx, s["y"] + dy),
                           "#D8DEF2", max(3, int(6 * k)))
+                self.layer("shotd")
                 self.dot(s["x"] - dx, s["y"] - dy, max(2, 3.4 * k), FIRE)
             else:
+                self.layer("shotd")
                 self.dot(s["x"], s["y"], max(3, 5 * k), BOMBC)
                 self.dot(s["x"] + 3, s["y"] - 8, max(1.4, 2 * k), FIRE)
 
+        self.layer("slash")
         for sl in self.slashes:
             k = sl["t"] / sl["life"]
             a = sl["a"] - .9 + k * 1.8
@@ -2217,31 +2442,39 @@ class App:
                 pts += [sl["x"] + math.cos(ang) * r, sl["y"] + math.sin(ang) * r]
             self.line(pts, sl["col"], max(1, int(4 * (1 - k)) + 1))
 
-        for f in self.fighters:
+        for i, f in enumerate(self.fighters):
+            tr, trd = self._rtag[i]
             if f.hook and f.state == "hookfire":
                 k = clamp(f.hook["t"] / f.hook["dur"], 0, 1)
                 hx = lerp(f.hook["x"], f.hook["tx"], k)
                 hy = lerp(f.hook["y"], f.hook["ty"], k)
+                self.layer(tr)
                 self.line((f.x + 20 * f.sc * f.face, f.y - 56 * f.sc, hx, hy), ROPE,
                           max(1, int(2.5 * f.K())))
+                self.layer(trd)
                 self.dot(hx, hy, max(2.5, 5 * f.K()), ROPE)
             if f.zip:
+                self.layer(tr)
                 self.line((f.x + 3 * f.sc * f.face, f.y - 78 * f.sc,
                            f.zip["ax"], f.zip["ay"]), ROPE, max(1, int(2.5 * f.K())))
+                self.layer(trd)
                 self.dot(f.zip["ax"], f.zip["ay"], max(2.5, 5 * f.K()), ROPE)
 
         if self.hover is not None and not self.hover.grabbed:
             col = self.hover.color()
+            self.layer("hover")
             for r, w in ((36, 7), (18, 5)):
                 self.ring(self.hover.x, self.hover.y - 30 * self.hover.sc, r, col, w)
 
-        for f in self.fighters:
-            self.draw_fighter(f)
-        for f in self.fighters:
-            self.draw_overlay(f)
+        for i, f in enumerate(self.fighters):
+            self.draw_fighter(f, i)
+        for i, f in enumerate(self.fighters):
+            self.draw_overlay(f, i)
+        self._frame_end()
 
     # ---- the figure ------------------------------------------------------
-    def draw_fighter(self, f):
+    def draw_fighter(self, f, fi):
+        tb, th, tf, ta, tw, twd = self._ftag[fi][:6]
         S = f.sc
         st = f.state
         ph = f.walk
@@ -2405,16 +2638,20 @@ class App:
         elbL = ik(neck[0], neck[1] - 1, hL[0], hL[1], 13, 13, -1)
         elbR = ik(neck[0], neck[1] - 1, hR[0], hR[1], 13, 13, -1)
 
+        self.layer(tb)
         self.line((*P(px, py), *P(*kneeL), *P(*fL)), col, lw)
         self.line((*P(px, py), *P(*kneeR), *P(*fR)), col, lw)
         self.line((*P(neck[0], neck[1] - 1), *P(*elbL), *P(*hL)), col, lw)
         self.line((*P(px, py), *P(*neck)), col, lw + 1)
 
         hxp, hyp = P(*head)
+        self.layer(th)
         self.dot(hxp, hyp, 11.5 * S, col)
+        self.layer(tf)
         self.draw_face(f, hxp, hyp, S, lean + tilt)
+        self.layer(ta)
         self.line((*P(neck[0], neck[1] - 1), *P(*elbR), *P(*hR)), col, lw)
-        self.draw_weapon(f, P, hR, elbR, hL)
+        self.draw_weapon(f, P, hR, elbR, hL, tw, twd)
 
     def draw_face(self, f, cx, cy, e, tilt):
         lookx = f.look * 2.2
@@ -2462,7 +2699,7 @@ class App:
         else:
             self.line((*pt(-3.2, 4.6), *pt(3.2, 4.6)), INK, w)
 
-    def draw_weapon(self, f, P, hR, elbR, hL):
+    def draw_weapon(self, f, P, hR, elbR, hL, tw, twd):
         st, S = f.state, f.sc
         a = math.atan2(hR[1] - elbR[1], hR[0] - elbR[0])
 
@@ -2470,6 +2707,7 @@ class App:
             x, y = rot(lx, ly, a)
             return P(hR[0] + x, hR[1] + y)
 
+        self.layer(tw)
         if st in ("hookfire", "zip"):
             ang = -1.2 if st == "zip" else a
             x1, y1 = rot(-4, 0, ang)
@@ -2489,6 +2727,7 @@ class App:
             for i in range(5):
                 self.line((*rel(8 + i * 6, -4 + jit), *rel(11 + i * 6, -7 + jit)),
                           "#FFE7A8", max(1, round(2 * S)))
+            self.layer(twd)
             self.dot(*rel(2, 2), max(2, 4 * S), "#E05A3A")
         elif w == "bow":
             aim = math.atan2(hL[1] - hR[1], hL[0] - hR[0])
@@ -2506,29 +2745,36 @@ class App:
                        *P(hL[0] + e2x, hL[1] + e2y)), STEEL, max(1, round(1.6 * S)))
         elif w == "blaster":
             self.line((*rel(-4, 0), *rel(18, 0)), GUNMETAL, max(2, round(8 * S)))
+            self.layer(twd)
             self.dot(*rel(20, 0), max(1.5, 3.4 * S), LASER)
         elif w == "lightning":
             self.line((*rel(-4, 0), *rel(20, 0)), "#9FB0D8", max(2, round(6 * S)))
+            self.layer(twd)
             self.ring(*rel(24, 0), max(2.5, 5 * S), BOLT, max(1, round(2 * S)))
             self.dot(*rel(24, 0), max(1.2, 2.2 * S), "#FFFFFF")
         elif w == "rocket":
             self.line((*rel(-8, 0), *rel(26, 0)), "#7E8AB4", max(4, round(10 * S)))
             self.line((*rel(26, 0), *rel(30, 0)), "#5C6690",
                       max(4, round(11 * S)))
+            self.layer(twd)
             self.dot(*rel(6, -6), max(1.5, 3 * S), "#3A4468")
         elif w == "minigun":
             spin = math.sin(self.time * 40) * 3 * S
             self.line((*rel(-6, 0), *rel(24, 0)), "#7E8AB4", max(3, round(7 * S)))
             self.line((*rel(4, -3), *rel(26, -3)), "#9AA6CC", max(1, round(2.4 * S)))
             self.line((*rel(4, 3), *rel(26, 3)), "#6B769C", max(1, round(2.4 * S)))
+            self.layer(twd)
             self.dot(rel(26, 0)[0], rel(26, 0)[1] + spin, max(1.4, 2.6 * S), FIRE)
         else:  # bomb
+            self.layer(twd)
             self.dot(*rel(12, 0), max(2.5, 6.2 * S), BOMBC)
             self.dot(*rel(15, -16), max(1.2, 2.2 * S), FIRE)
 
     # ---- speech, health, cargo ------------------------------------------
-    def draw_overlay(self, f):
+    def draw_overlay(self, f, fi):
+        to, tob, tot = self._ftag[fi][6:]
         S = f.sc
+        self.layer(to)
         if f.carry:
             c = f.carry
             w = min(c["w"], 46) * .8
@@ -2550,15 +2796,15 @@ class App:
             bx = f.x + 16 * S - self.ox - self.sx
             by = f.y - 102 * S - self.oy - self.sy
             col = f.color()
-            t = self.canvas.create_text(bx, by, text=f.emote, fill=col, anchor="w",
-                                        font=("Segoe UI", fs, "bold"))
+            self.layer(tot)
+            t = self.text(bx, by, f.emote, col, ("Segoe UI", fs, "bold"))
             bb = self.canvas.bbox(t)
             if bb:
+                # the box layer is raised before the text layer, so it lands behind
                 pad = fs * .55
-                r = self.canvas.create_rectangle(bb[0] - pad, bb[1] - pad * .7,
-                                                 bb[2] + pad, bb[3] + pad * .7,
-                                                 fill="#0C1024", outline=col, width=2)
-                self.canvas.tag_lower(r, t)
+                self.layer(tob)
+                self._rect(bb[0] - pad, bb[1] - pad * .7, bb[2] + pad,
+                           bb[3] + pad * .7, "#0C1024", col, 2)
 
     # ==================================================================
     #  loop
@@ -2588,8 +2834,8 @@ class App:
                 if not self.paused:
                     self.update(dt)
                     self.draw()
-                elif self.canvas.find_all():
-                    self.canvas.delete("all")
+                elif self._pool:
+                    self.clear_canvas()
             except Exception as exc:
                 if DEBUG:
                     import traceback

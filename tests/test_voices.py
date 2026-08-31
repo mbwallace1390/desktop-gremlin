@@ -55,8 +55,9 @@ if banks:
 # 3. every event the source yells is a real key, and none is unreachable.
 # First argument only, so kwargs like name="..." are not mistaken for events,
 # but both halves of yell("revenge" if losing else "fight", ...) are caught.
+# chat() is yell() behind a chatty roll, so its events count as spoken too.
 yelled = set()
-for firstarg in re.findall(r"yell\(([^,]*)", src):
+for firstarg in re.findall(r"(?:yell|chat)\(([^,]*)", src):
     yelled.update(re.findall(r'"([a-z_]+)"', firstarg))
 # these two are yelled through a variable, so the module declares them
 need = yelled | set(gm.MOODS) | set(gm.GREET_EVENTS) | set(gm.CONTEXT_EVENTS)

@@ -180,8 +180,9 @@ getting around.
 
 ## Playing with them
 
-Move your cursor near one — two rings appear, that's the grab target. Click,
-drag, throw. They tumble, land, and hold a grudge. They notice your cursor from
+Move your cursor near one — two rings appear and a name tag says which one
+you're about to grab. Click, drag, throw. They tumble, land, and hold a
+grudge. They notice your cursor from
 anywhere on screen and sometimes come pick a fight with it.
 
 Everywhere else the overlay is click-through, so it never intercepts your work.
@@ -287,7 +288,7 @@ screenshot.
 python tests\run_all.py
 ```
 
-Thirteen checks, a few seconds, nothing to install. They drive the real app
+Fourteen checks, a few seconds, nothing to install. They drive the real app
 with the Windows shell stubbed out, so they never touch your desktop. Every one
 of them encodes a bug that actually shipped.
 

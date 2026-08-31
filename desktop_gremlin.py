@@ -136,6 +136,14 @@ def send_msg(hwnd, msg, wparam, lparam, timeout=250):
 # ==========================================================================
 #  SETTINGS
 # ==========================================================================
+# The cast, in the order they join. Declared before everything else because
+# both the settings clamp below and the memory model are keyed by it — it used
+# to live with the character data, which put it AFTER load_settings() ran:
+# len(ROSTER) raised NameError inside the validation try, and every saved
+# settings file was silently replaced with the defaults on every launch.
+ROSTER = ("brawler", "sniper", "coward", "showoff", "grump",
+          "magpie", "zealot", "tinkerer", "drama", "veteran")
+
 DEFAULTS = {
     "scale": 0.68,            # 0.68 ~= the height of a desktop icon
     "fps": 40,
@@ -197,11 +205,6 @@ CFG = load_settings()
 # process. The only names stored are desktop icon labels, which
 # gremlin_icon_backup.json already holds. Settings has a "Forget everything"
 # button, and deleting the file does the same job.
-# The cast, in the order they join. Declared up here rather than with the
-# rest of the character data because the memory model below is keyed by it.
-ROSTER = ("brawler", "sniper", "coward", "showoff", "grump",
-          "magpie", "zealot", "tinkerer", "drama", "veteran")
-
 MEMORY_PATH = os.path.join(HERE, "gremlin_memory.json")
 MEM_KEYS = ("thrown", "grabbed", "wins", "losses", "icons_moved", "streak")
 MEM_DIRTY = False
@@ -252,6 +255,15 @@ def bump(kind, key, n=1):
     """Nudge a counter. The write itself is throttled by the frame loop."""
     global MEM_DIRTY
     MEM["who"][kind][key] = MEM["who"][kind].get(key, 0) + n
+    MEM_DIRTY = True
+
+
+def count_run():
+    """The one write main() makes itself. It has to mark the memory dirty:
+    a bare MEM["runs"] += 1 never reached disk on a run where nothing else
+    dirtied it, so a user who only ever watched stayed on day one forever."""
+    global MEM_DIRTY
+    MEM["runs"] += 1
     MEM_DIRTY = True
 
 
@@ -1416,6 +1428,7 @@ VOICES = {
         "ko":       ["...", "urk", "worth it", "tell them I swung first"],
         "victory":  ["GET UP", "who's next", "and STAY down", "next contestant"],
         "hurt":     ["OW", "#@$%", "cheap shot", "that's IT"],
+        "flee":     ["tactical retreat", "I'll be BACK", "this isn't OVER"],
         "fight":    ["COME HERE", "you're MINE", "hold still", "ROUND TWO"],
         "cursor":   ["oh, YOU again", "come here", "hold still", "you and me"],
         "hook":     ["whee", "yoink", "GERONIMOOO", "out of the way"],
@@ -1457,6 +1470,7 @@ VOICES = {
         "ko":       ["...", "out of ammunition", "hm.", "range was wrong"],
         "victory":  ["confirmed", "one shot", "next target", "clean"],
         "hurt":     ["hit", "flesh wound", "recording that", "logged"],
+        "flee":     ["relocating", "this position is burnt", "smoke out"],
         "fight":    ["ranging", "do not move", "acquiring", "in three. two."],
         "cursor":   ["I see you", "you are very large", "hold there",
                      "you blink a lot"],
@@ -1498,6 +1512,7 @@ VOICES = {
         "ko":       ["...", "worth it, no it wasn't", "told you", "eep"],
         "victory":  ["did I do that?", "sorry!", "I didn't mean to", "no hard feelings?"],
         "hurt":     ["OW OW", "why me", "I wasn't even", "not the face"],
+        "flee":     ["NOPE", "nope nope nope", "LEGS, DO YOUR THING"],
         "fight":    ["do we have to?", "let's talk about this", "I'm coming, I guess",
                      "no no no no"],
         "cursor":   ["the hand. THE HAND.", "not me", "pick someone else"],
@@ -1538,6 +1553,7 @@ VOICES = {
         "ko":       ["...", "curtain", "what a way to go", "remember me"],
         "victory":  ["THANK YOU, THANK YOU", "was that good for you", "encore?"],
         "hurt":     ["MY FACE", "not the profile", "OW, artistically"],
+        "flee":     ["INTERMISSION", "exit, stage left", "hold my applause"],
         "fight":    ["watch closely", "front row seats", "you'll want to see this"],
         "cursor":   ["an audience!", "watch this bit", "hello, gorgeous"],
         "hook":     ["and NOW the aerial", "ta-daa", "wheeeee"],
@@ -1577,6 +1593,7 @@ VOICES = {
         "ko":       ["...", "finally, a rest", "hm.", "that'll do"],
         "victory":  ["there.", "done.", "can I sit down now", "sorted"],
         "hurt":     ["ow. right.", "was that necessary", "hm."],
+        "flee":     ["not worth it", "have it your way then", "I'm going home"],
         "fight":    ["let's get on with it", "fine.", "come on then", "quickly"],
         "cursor":   ["oh, it's you", "what now", "I was busy"],
         "hook":     ["up we go, I suppose", "hm", "this had better work"],
@@ -1616,6 +1633,8 @@ VOICES = {
         "ko":       ["...", "keep the icons", "don't touch my pile", "shiny..."],
         "victory":  ["mine", "and yours is mine", "collected", "and your stuff too"],
         "hurt":     ["ay! careful!", "not the goods", "rude", "watch the merchandise"],
+        "flee":     ["grab and go", "me and the pile are LEAVING",
+                     "keep the fight, I've got stuff"],
         "fight":    ["what have you GOT", "give it here", "hand it over"],
         "cursor":   ["ooh, a big one", "can I have it", "what's that"],
         "hook":     ["ooh, up there", "shiny up here", "wheee"],
@@ -1654,6 +1673,10 @@ VOICES = {
         "ko":       ["...", "it was foretold", "I go gladly", "not the end"],
         "victory":  ["IT IS DONE", "so pass the unworthy", "as promised", "RISE, IF YOU CAN"],
         "hurt":     ["PAIN IS NOTHING", "I feel nothing", "is that all"],
+        # nerve 0: he never actually says these. The bank still has to be
+        # complete -- a missing key is a KeyError the day his nerve changes.
+        "flee":     ["a tactical pilgrimage", "the faith regroups",
+                     "this is not retreat, it is prophecy"],
         "fight":    ["JUDGEMENT", "come, then", "your hour", "I HAVE COME"],
         "cursor":   ["the great hand", "I know you", "you steer everything"],
         "hook":     ["I ASCEND", "upward", "carry me"],
@@ -1692,6 +1715,8 @@ VOICES = {
         "ko":       ["...", "systems down", "back to the workshop", "hm."],
         "victory":  ["as designed", "test successful", "noted for the log", "next prototype"],
         "hurt":     ["structural damage", "ow. noted.", "that'll bruise"],
+        "flee":     ["withdrawing for repairs", "back to the bench",
+                     "aborting the field test"],
         "fight":    ["field test", "hold still, this is calibrated", "stand there. exactly there."],
         "cursor":   ["the operator", "you are imprecise", "steady hands, please"],
         "hook":     ["deploying line", "tension good", "up we go"],
@@ -1729,6 +1754,7 @@ VOICES = {
         "ko":       ["...", "tell my story", "I regret NOTHING", "remember me kindly"],
         "victory":  ["and SO it ends", "witness it", "let this be recorded", "I weep for you"],
         "hurt":     ["I AM SLAIN", "the PAIN", "how could you", "MY SIDE"],
+        "flee":     ["I FLEE", "away, AWAY", "exit, pursued by a bear"],
         "fight":    ["at LAST, a nemesis", "our moment comes", "prepare yourself"],
         "cursor":   ["the great hand returns", "you again, tormentor", "witness me"],
         "hook":     ["I FLY", "into the heavens", "I SOAR"],
@@ -1766,6 +1792,7 @@ VOICES = {
         "ko":       ["...", "hm", "that's that", "fair"],
         "victory":  ["done", "up you get", "next", "hm"],
         "hurt":     ["hm", "had worse", "noted", "fine"],
+        "flee":     ["falling back", "not today", "hm. no."],
         "fight":    ["right", "come on", "let's go", "hm"],
         "cursor":   ["you", "hm", "you again", "still there"],
         "hook":     ["up", "hm", "hold on"],
@@ -1790,6 +1817,14 @@ VOICES = {
         "ctx_unsaved":  ["save it", "unsaved", "hm. save."],
     },
 }
+
+# A voice you can see. Only where the family itself says something -- the
+# tinkerer speaks in the monospace of his own labels, the drama in the italics
+# of a playbill. Everyone else shares the default, because ten novelty fonts
+# would read as a ransom note.
+SPEECH_FONT = {"tinkerer": ("Consolas", "bold"),
+               "drama": ("Segoe UI", "bold italic")}
+
 
 class Fighter:
     def __init__(self, x, y, kind=ROSTER[0]):
@@ -1862,6 +1897,16 @@ class Fighter:
     def yell(self, event, dur=1.5, **fmt):
         """Say something this particular one would say."""
         self.say(self.line(event, **fmt), dur)
+
+    def chat(self, event, dur=1.5, **fmt):
+        """A remark rather than a report -- hook whoops, getting back up,
+        announcing a fight. Those the quiet ones keep to themselves, which is
+        most of what separates the veteran from the drama once a brawl starts.
+        Reactions to being grabbed, thrown or beaten stay on yell(): silence
+        there reads as the app missing the event. The roll happens HERE,
+        before yell, so anything counting yells is counting actual speech."""
+        if random.random() < min(1.0, .30 + .42 * self.per["chatty"]):
+            self.yell(event, dur, **fmt)
 
     def set_state(self, s):
         self.state, self.st = s, 0.0
@@ -1957,6 +2002,7 @@ class App:
         self.awake_since = 0.0
         self.greeted = False
         self.mem_saved = 0.0
+        self._frame_errs = 0
 
         # Canvas item pool. Items are moved and recoloured frame to frame
         # instead of being deleted and rebuilt. Tk draws in creation order, so
@@ -2009,6 +2055,7 @@ class App:
         their health, mood, position and any icon they were holding."""
         want = int(clamp(CFG["crowd"], 1, len(ROSTER)))
         keep = self.fighters[:want]
+        had = len(keep)
         for f in self.fighters[want:]:
             self.drop_icon(f)          # never leave one holding a real icon
         for i in range(len(keep), want):
@@ -2021,6 +2068,13 @@ class App:
             f.foe = None               # free-for-all; picked fresh in decide()
         self._build_layers()
         self._prune_layers()
+        # Latecomers off the slider announce themselves. Not at startup: the
+        # greeting five seconds in covers that, and ten hellos at once is a
+        # wall of text.
+        if self.time > 1:
+            for f in self.fighters[had:]:
+                self.puff(f.x, f.y, 6, DUST, f.K())
+                f.yell("hello", 1.6)
 
     def _prune_layers(self):
         """Throw away pooled canvas items belonging to fighters who have gone.
@@ -2329,7 +2383,10 @@ class App:
         gy = self.ground_at(f.x)
         f.wander_to = clamp(f.x + random.uniform(-620, 620), self.ox + 90,
                             self.ox + self.W - 90)
-        f.carry_dest_y = clamp(gy - random.uniform(60, 420), 40, gy - 60)
+        # self.oy, not 0: the virtual screen goes negative when a monitor
+        # sits above or left of the primary, and an absolute clamp there
+        # pins every drop to the primary's top edge.
+        f.carry_dest_y = clamp(gy - random.uniform(60, 420), self.oy + 40, gy - 60)
         bump(f.kind, "icons_moved")
         bump_icon(f.carry["name"])
         f.yell("snatch", 1.6, name=f.carry["name"][:12] or "that")
@@ -2361,7 +2418,7 @@ class App:
                 sx, sy = f.x - c["w"] / 2, f.y - 40 * f.sc
             gy = self.ground_at(f.x)
             sx = clamp(sx, self.ox + 4, self.ox + self.W - c["w"] - 4)
-            sy = clamp(sy, 4, gy - c["h"] - 4)
+            sy = clamp(sy, self.oy + 4, gy - c["h"] - 4)
             SHELL.set_item_pos(c["idx"], sx + c["offx"], sy + c["offy"])
             self.puff(sx + c["w"] / 2, sy + c["h"], 6, DUST, f.K())
         except Exception:
@@ -2379,7 +2436,7 @@ class App:
                   "dur": clamp(dist(f.x, f.y - 60, tx, ty) / 1500, .12, .5)}
         f.set_state("hookfire")
         f.face = 1 if tx > f.x else -1
-        f.yell("hook", 1.0)
+        f.chat("hook", 1.0)
 
     def start_attack(self, f, at=None, foe=False):
         if at is not None:
@@ -2525,10 +2582,19 @@ class App:
             att.anger = .2
             att.set_mood("smug")
             att.yell("victory", 1.8)
+            # Stand over the body for a beat. Only from combat states: a
+            # ranged kill can land while the owner is carrying an icon, and
+            # yanking him out of "carry" strands the icon in mid-air with
+            # nothing ticking it.
+            if att.state in ("attack", "fight"):
+                att.set_state("taunt")
         else:
             vic.set_state("thrown")
+            # The commonest yell in a brawl by an order of magnitude -- a
+            # minigun stream lands a hit every 70ms. The health bar already
+            # reports the damage; saying "ow" is theatre, so chatty owns it.
             if random.random() < .6:
-                vic.yell("hurt", 1.1)
+                vic.chat("hurt", 1.1)
 
     def hit_target(self, f, t, fx, fy):
         self.spark(fx, fy, 10, "#CFD8F5", 260, f.K())
@@ -2573,7 +2639,11 @@ class App:
                 f.snatch = False
                 f.plan = plan_weapon(f.per, rage)
                 f.set_state("fight")
-                f.yell("revenge" if losing else "fight", 1.4)
+                # revenge is the memory feature talking; it always gets said
+                if losing:
+                    f.yell("revenge", 1.4)
+                else:
+                    f.chat("fight", 1.4)
                 return
             # piling onto someone else's icon beats everyone picking his own
             mate = None
@@ -2586,7 +2656,7 @@ class App:
                 f.hits = 0
                 f.plan = plan_weapon(f.per, rage)
                 f.set_state("hunt")
-                f.yell("gangup", 1.4)
+                f.chat("gangup", 1.4)
                 return
 
         if self.time - self.mouse["t"] < 4 and \
@@ -2595,7 +2665,7 @@ class App:
             f.target = None
             f.set_state("cursor")
             f.boredom = 0
-            f.yell("cursor", 1.4)
+            f.chat("cursor", 1.4)
             return
 
         if alive and r < .18:
@@ -2711,7 +2781,7 @@ class App:
                     m = random.choice(["furious", "sulking", "hyped", "smug", "bored"])
                     if m == "furious":
                         f.anger = .72
-                        f.yell("rage", 1.7)
+                        f.chat("rage", 1.7)
                     f.set_mood(m)
 
         s = f.state
@@ -2730,7 +2800,7 @@ class App:
                 f.goal = self.time + .6
                 f.set_mood("furious")
                 f.anger = .8
-                f.yell("getup", 1.7)
+                f.chat("getup", 1.7)
         elif s == "idle":
             f.vx = approach(f.vx, 0, 900 * K * dt)
             if self.time > f.goal:
@@ -2779,7 +2849,9 @@ class App:
                 f.wander_to = clamp(f.x - (foe.x - f.x), self.ox + 60,
                                     self.ox + self.W - 60)
                 f.set_state("walk")
-                f.yell("hurt", 1.2)
+                # Breaking off is the nerve trait's one visible moment, so it
+                # gets its own line instead of borrowing the generic ouch.
+                f.yell("flee", 1.4)
             else:
                 d = foe.x - f.x
                 f.face = 1 if d >= 0 else -1
@@ -2982,8 +3054,12 @@ class App:
         # He lands just INSIDE the far edge, not just outside it. Landing
         # outside lets an idle fighter wrap, sit out of sight, and wrap again,
         # ping-ponging between the two edges without ever being visible.
-        off = f.x < self.ox - 12 or f.x > self.ox + self.W + 12
-        f.out = f.out + dt if off else 0.0
+        # Judged from the centre crossing the edge, and the clock DRAINS
+        # rather than resets when he pokes back in: a duel hopping right on
+        # the seam used to reset it on every bounce and hold him out of sight
+        # past any limit. A beat of fully visible play still clears it.
+        off = f.x < self.ox or f.x > self.ox + self.W
+        f.out = f.out + dt if off else max(0.0, f.out - 4 * dt)
         past = f.x < self.ox - WRAP or f.x > self.ox + self.W + WRAP
         if past or f.out > OUT_MAX:
             self.puff(f.x, f.y - 20 * f.sc, 4, DUST, K, 10)
@@ -3475,6 +3551,12 @@ class App:
             self.layer("hover")
             for r, w in ((36, 7), (18, 5)):
                 self.ring(self.hover.x, self.hover.y - 30 * self.hover.sc, r, col, w)
+            # Name the one under the cursor. Ten of them, and the halo only
+            # says who once you have learned the colours.
+            name = "the " + self.hover.kind
+            self.text(self.hover.x - self.ox - self.sx - len(name) * 3.4,
+                      self.hover.y - self.oy - self.sy + 16,
+                      name, col, ("Segoe UI", 10, "bold"))
 
         for i, f in enumerate(self.fighters):
             self.draw_fighter(f, i)
@@ -3523,14 +3605,22 @@ class App:
             hL, hR = (-6, -74), (7, -76)
         elif st in ("walk", "hunt", "fight"):
             run = abs(f.vx) > 210 * K
-            stride = 19 if run else 13
-            lift = 13 if run else 8
+            # The walk is temperament too: dash lengthens the stride, hops
+            # puts spring in it, aggro swings the arms. Factors sit near 1 so
+            # no gait strains the leg IK -- the grump shuffles, the showoff
+            # bounces, the coward scurries, and you can tell from across the
+            # screen before anyone says a word.
+            stk = .78 + .27 * f.per["dash"]
+            lfk = .66 + .50 * f.per["hops"]
+            ark = .75 + .30 * f.per["aggro"]
+            stride = (19 if run else 13) * stk
+            lift = (13 if run else 8) * lfk
             fL = (math.cos(ph) * stride, -max(0, math.sin(ph)) * lift)
             fR = (math.cos(ph + math.pi) * stride, -max(0, math.sin(ph + math.pi)) * lift)
-            py = -30 - abs(math.sin(ph)) * 1.6
+            py = -30 - abs(math.sin(ph)) * 1.6 * lfk
             lean = .30 if run else .10
-            hL = (-math.cos(ph) * 13 + 2, -40 + math.sin(ph) * 2)
-            hR = (-math.cos(ph + math.pi) * 13 + 2, -40 - math.sin(ph) * 2)
+            hL = (-math.cos(ph) * 13 * ark + 2, -40 + math.sin(ph) * 2)
+            hR = (-math.cos(ph + math.pi) * 13 * ark + 2, -40 - math.sin(ph) * 2)
             if f.skid > 0:
                 lean = -.34
                 fL, fR = (-16, 0), (10, 0)
@@ -3628,6 +3718,9 @@ class App:
             elif f.mood == "smug":
                 lean, tilt = .05, -.10
                 hL, hR = (-13, -33), (13, -33)
+            if f.emote_t > 0 and f.emote:
+                # talking with the hands: the front one conducts the sentence
+                hR = (15, -54 + math.sin(self.time * 9) * 4)
 
         if f.stun > 0:
             tilt += math.sin(self.time * 30) * .1
@@ -3669,7 +3762,12 @@ class App:
         # at ten of them, +168 items and +25% of the frame.
         hxp, hyp = P(*head)
         self.layer(th)
-        self.dot(hxp, hyp, 11.5 * S, dark, col, max(3, round(5.0 * S)))
+        hw = max(3, round(5.0 * S))
+        if f.mood == "furious":
+            # The halo seethes. Width, not colour: the shade is his identity
+            # and has to stay readable while it pulses.
+            hw = max(3, hw + round(1.6 * math.sin(self.time * 16)))
+        self.dot(hxp, hyp, 11.5 * S, dark, col, hw)
         self.layer(tf)
         self.draw_face(f, hxp, hyp, S, lean + tilt)
         self.layer(ta)
@@ -3814,20 +3912,43 @@ class App:
             self.box(f.x - w, y, f.x - w + 2 * w * (f.hp / 100), y + 4 * S,
                      "#63E0A8" if f.hp > 40 else "#FF5B47")
 
+        if f.state == "ko":
+            # Dizzy orbit over the fallen. Two dots on opposite phases; the
+            # ellipse is squashed flat so it reads as circling, not bouncing.
+            a = self.time * 7
+            for phk in (0.0, math.pi):
+                self.dot(f.x + math.cos(a + phk) * 15 * S,
+                         f.y - 36 * S + math.sin(a + phk) * 4 * S,
+                         2.3 * S, f.color())
+
         if f.emote_t > 0 and f.emote:
             fs = int(clamp(round(9 * S + 4), 9, 18))
             bx = f.x + 16 * S - self.ox - self.sx
             by = f.y - 102 * S - self.oy - self.sy
             col = f.color()
+            fam, style = SPEECH_FONT.get(f.kind, ("Segoe UI", "bold"))
             self.layer(tot)
-            t = self.text(bx, by, f.emote, col, ("Segoe UI", fs, "bold"))
+            t = self.text(bx, by, f.emote, col, (fam, fs, style))
             bb = self.canvas.bbox(t)
             if bb:
+                # Keep the bubble on screen. A long line from someone near the
+                # right edge used to run straight off it, and the tail below is
+                # what keeps a shoved bubble pointing at its speaker.
+                dx = min(0, (self.W - 10) - bb[2])
+                if bb[0] + dx < 10:
+                    dx = 10 - bb[0]
+                dy = max(0, 8 - bb[1])
+                if dx or dy:
+                    self.canvas.coords(t, bx + dx, by + dy)
+                    bb = (bb[0] + dx, bb[1] + dy, bb[2] + dx, bb[3] + dy)
                 # the box layer is raised before the text layer, so it lands behind
                 pad = fs * .55
                 self.layer(tob)
                 self._rect(bb[0] - pad, bb[1] - pad * .7, bb[2] + pad,
                            bb[3] + pad * .7, "#0C1024", col, 2)
+                wx, wy = self.ox + self.sx, self.oy + self.sy
+                self.line((bb[0] + wx + 6, bb[3] + wy + pad * .7,
+                           f.x + 6 * S * f.face, f.y - 82 * S), col, 2)
 
     # ==================================================================
     #  loop
@@ -3866,8 +3987,14 @@ class App:
                 if DEBUG:
                     import traceback
                     traceback.print_exc()
-                else:
+                elif self._frame_errs < 20:
+                    # A persistent fault fires every frame, and under pythonw
+                    # every print lands in gremlin_log.txt -- 40 a second
+                    # breaks the promise that the log stays small.
+                    self._frame_errs += 1
                     print("frame error:", exc)
+                    if self._frame_errs == 20:
+                        print("(more of the same; going quiet about it)")
             self.root.after(max(8, int(1000 / CFG["fps"])), tick)
 
         self.root.after(30, tick)
@@ -3893,7 +4020,7 @@ def main():
     print("=" * 60)
 
     start_log()
-    MEM["runs"] += 1
+    count_run()
     state = backup_layout()
     if state == "saved":
         print("  Saved your desktop icon layout to gremlin_icon_backup.json")

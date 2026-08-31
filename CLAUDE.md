@@ -10,7 +10,7 @@ Windows only — it talks to the Explorer shell directly.
 python tests\run_all.py
 ```
 
-Thirteen checks, a few seconds, nothing to install. Each one encodes a bug that
+Fourteen checks, a few seconds, nothing to install. Each one encodes a bug that
 actually shipped. They build a real Tk window and a real `App`, so windows
 flash on screen while they run; none of them touch your desktop icons, because
 the shell is stubbed out.
@@ -50,6 +50,15 @@ by hand instead of going through `start_attack`, which is exactly where both
 fixes lived, and so reported no change after a correct fix.
 
 ## Things that bite
+
+**Module-level init runs top to bottom, and a catch-all eats the proof.**
+`CFG = load_settings()` used to run two hundred lines above `ROSTER`; the
+validation clamp's `len(ROSTER)` raised NameError into the clamp's own
+`except`, which returns the defaults — so every saved settings file was
+silently discarded on every launch, for a whole release, and the Settings
+window read as amnesiac. Anything `load_settings` touches must be declared
+above it. `tests/test_settings.py` holds the line by importing a sandbox copy,
+because the bug only ever existed at import time.
 
 **A test that drives the settings window writes a real settings file.**
 `SettingsWindow.apply()` calls `save_settings(CFG)` and `set_run_at_startup()`,
@@ -158,7 +167,7 @@ icons between them soaks up every round. Shots aimed *at* an icon still hit it,
 and blast radius still catches icons either way.
 
 **Adding a line they can say is one table edit.** `VOICES[kind][event]`, and
-`f.yell("event")` at the site. All ten must carry the same 33 event keys, and
+`f.yell("event")` at the site. All ten must carry the same 34 event keys, and
 no two may share a line — `tests/test_voices.py` fails on either, and a missing
 key is a `KeyError` in the middle of a fight.
 

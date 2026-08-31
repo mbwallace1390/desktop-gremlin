@@ -1116,6 +1116,27 @@ def rot(x, y, a):
     return x * c - y * s, x * s + y * c
 
 
+def lob_angle(dx, dy, v, g):
+    """Launch angle that drops a projectile onto (dx, dy), in screen
+    coordinates where +y is down. None if it simply cannot get there.
+
+    An arrow fired flat at something 280px away lands about 100px in front of
+    it: the speeds scale with how big he is, the reaches do not, and gravity
+    wins. Archers lob."""
+    if g <= 0:
+        return math.atan2(dy, dx)
+    d = abs(dx)
+    if d < 1e-6:
+        return math.pi / 2 if dy > 0 else -math.pi / 2
+    disc = v ** 4 - g * (g * d * d - 2 * dy * v * v)
+    if disc < 0:
+        return None
+    # the flatter of the two arcs -- the other is a mortar shot
+    theta = math.atan2(v * v - math.sqrt(disc), g * d)
+    return math.atan2(-v * math.sin(theta),
+                      v * math.cos(theta) * (1 if dx >= 0 else -1))
+
+
 def ik(ax, ay, bx, by, l1, l2, bend):
     d = math.hypot(bx - ax, by - ay) or 0.001
     d = clamp(d, abs(l1 - l2) + 0.01, l1 + l2 - 0.01)
@@ -1453,6 +1474,7 @@ class Fighter:
         self.wander_to = x
         self.away = 0.0            # how long he has been off the screen
         self.ledge_cd = 0.0        # no re-grabbing the lip he just left
+        self.at_foe = False        # this shot is meant for the other one
         self.squash = 0.0          # >0 land squash, <0 stretch
         self.carry = None          # (icon index, dx, dy offset to list coords)
         self.carry_t = 0.0
@@ -1969,6 +1991,14 @@ class App:
                 random.choice(["sword", "chainsaw", "blaster", "minigun"])
         else:
             f.weapon = f.plan
+        # Shots meant for the other one ignore the desktop on the way past;
+        # otherwise a row of icons between them soaks up every round.
+        f.at_foe = bool(foe and f.foe)
+        if f.weapon == "bow":
+            k = f.K()
+            ang = lob_angle(cx - f.x, cy - (f.y - 58 * f.sc), 720 * k, 420 * k)
+            if ang is not None:
+                f.aim = ang
         f.atk_dur = ATKDUR[f.weapon]
         f.atk = 0.0
         f.fired = False
@@ -1984,7 +2014,8 @@ class App:
         k = f.K()
         s = {"k": kind, "x": hx, "y": hy, "owner": f,
              "vx": math.cos(f.aim) * speed * k, "vy": math.sin(f.aim) * speed * k,
-             "g": grav * k, "life": life, "trail": [], "spin": 0.0}
+             "g": grav * k, "life": life, "trail": [], "spin": 0.0,
+             "pierce": f.at_foe}
         if extra:
             s.update(extra)
         self.shots.append(s)
@@ -2008,7 +2039,8 @@ class App:
             self.shots.append({"k": "bomb", "x": hx, "y": hy, "owner": f,
                                "vx": math.cos(f.aim) * 430 * k,
                                "vy": math.sin(f.aim) * 430 * k - 240 * k,
-                               "g": 900 * k, "life": 2.2, "trail": [], "spin": 0.0})
+                               "g": 900 * k, "life": 2.2, "trail": [],
+                               "spin": 0.0, "pierce": f.at_foe})
         elif w == "rocket":
             self.shoot(f, "rocket", 560, 40, 3.2)
             self.puff(*self.muzzle(f), 6, "#C9D3F0", k, 10)
@@ -2669,10 +2701,11 @@ class App:
 
             sx, sy = s["x"], s["y"]
             hit_t = None
-            for cx, cy, hw, hh, t in bounds:
-                if -hw < sx - cx < hw and -hh < sy - cy < hh:
-                    hit_t = t
-                    break
+            if not s.get("pierce"):
+                for cx, cy, hw, hh, t in bounds:
+                    if -hw < sx - cx < hw and -hh < sy - cy < hh:
+                        hit_t = t
+                        break
             hit_f = None
             for f in self.fighters:
                 if f is s["owner"] or f.hp <= 0:

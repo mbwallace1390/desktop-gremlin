@@ -1,0 +1,113 @@
+"""The bend flip touches every pose, not just walking. Check none of them
+produce a broken limb: no NaN, no joint flung away from the body, and the
+knee still leads in every pose where he is upright on his feet.
+"""
+import importlib.util
+import math
+import os
+import sys
+
+_TESTS = os.path.dirname(os.path.abspath(__file__))
+SRC = os.environ.get(
+    "GREMLIN_SRC",
+    os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
+HERE = os.path.join(_TESTS, ".tmp")          # scratch; never the repo itself
+os.makedirs(HERE, exist_ok=True)
+
+spec = importlib.util.spec_from_file_location("gm", SRC)
+gm = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gm)
+gm.MEMORY_PATH = os.path.join(HERE, "pose_memory.json")
+gm.MEM = gm.blank_memory()
+gm.CFG.update(gm.DEFAULTS)
+gm.CFG["rival"] = False
+gm.CFG["sleep_when_idle"] = False
+gm.CFG["all_monitors"] = False
+gm.idle_seconds = lambda: 0.0
+
+app = gm.App()
+app.poll_cursor = lambda dt: None
+f = app.fighters[0]
+bad = []
+
+STATES = ["idle", "walk", "hunt", "fight", "carry", "jump", "fall", "zip",
+          "hookfire", "ledge", "wallslide", "grabbed", "thrown", "taunt",
+          "cursor", "sleep", "ko", "attack"]
+UPRIGHT = ("idle", "walk", "hunt", "fight", "carry", "taunt", "cursor", "attack")
+
+
+def draw(state, phase, weapon="sword", mood="bored", face=1):
+    f.state, f.st, f.face, f.mood = state, 0.5, face, mood
+    f.walk = phase
+    f.vx, f.vy = 240.0 * face, 0.0
+    f.x, f.y = 900.0, 800.0
+    f.squash = f.tumble = f.stun = 0.0
+    f.blink = 1.0
+    f.weapon, f.atk_dur, f.atk = weapon, gm.ATKDUR[weapon], 0.4 * gm.ATKDUR[weapon]
+    f.aim = 0.6
+    f.hook = {"x": f.x, "y": f.y - 60, "tx": f.x + 200, "ty": 400.0,
+              "t": 0.2, "dur": 0.4}
+    f.zip = {"ax": f.x + 200, "ay": 400.0, "t": 0.2, "sx": f.x, "sy": f.y,
+             "dur": 0.6}
+    app._frame_begin()
+    app.sx = app.sy = 0.0
+    app.draw_fighter(f, 0)
+    app._frame_end()
+    tb, ta = app._ftag[0][0], app._ftag[0][3]
+    bx, by = f.x - app.ox, f.y - app.oy
+    out = []
+    for item in app._pool[tb]["line"][:3] + app._pool[ta]["line"][:1]:
+        co = app.canvas.coords(item)
+        out.append([((co[i] - bx) * face, co[i + 1] - by) for i in range(0, 6, 2)])
+    return out
+
+
+checked = 0
+for st in STATES:
+    for w in (gm.WEAPONS if st == "attack" else ["sword"]):
+        for face in (1, -1):
+            for i in range(8):
+                ph = i * math.pi / 4
+                for limb in draw(st, ph, w, face=face):
+                    checked += 1
+                    for (x, y) in limb:
+                        if not (math.isfinite(x) and math.isfinite(y)):
+                            bad.append("%s/%s: non-finite joint" % (st, w))
+                        elif abs(x) > 220 or abs(y) > 220:
+                            bad.append("%s/%s: joint flung to (%.0f, %.0f)"
+                                       % (st, w, x, y))
+
+# knees must still lead wherever he is upright on his feet
+wrong = []
+for st in UPRIGHT:
+    for i in range(12):
+        ph = i * math.pi / 6
+        legs = draw(st, ph)[:2]
+        for pts in legs:
+            (ax, ay), (kx, ky), (bx, by) = pts
+            if abs(by - ay) < 1e-6:
+                continue
+            t = (ky - ay) / (by - ay)
+            if not (0.0 <= t <= 1.0):
+                continue
+            if kx - (ax + (bx - ax) * t) < -0.5:
+                wrong.append(st)
+
+print("limb samples checked  : %d across %d states, both facings" % (checked, len(STATES)))
+print("non-finite or flung   : %d" % len(bad))
+print("upright poses with a backward knee: %s"
+      % (sorted(set(wrong)) or "none"))
+if wrong:
+    bad.append("backward knee in: %s" % sorted(set(wrong)))
+for b in bad[:5]:
+    print("   " + b)
+
+try:
+    app.tray.remove()
+    app.root.destroy()
+except Exception:
+    pass
+if os.path.exists(gm.MEMORY_PATH):
+    os.remove(gm.MEMORY_PATH)
+print("\n" + ("FAIL" if bad else "PASS"))
+sys.exit(1 if bad else 0)

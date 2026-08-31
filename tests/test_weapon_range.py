@@ -1,12 +1,26 @@
-"""Do their shots actually reach each other, and what stops them?
+"""Does every weapon cover the distance it is fired from?
 
-For each ranged weapon: stand the two of them apart at the distance the AI is
-willing to open fire from (REACH scaled the way decide() scales it), fire, and
-follow the projectile. Reports whether it reached the foe, fell short, or was
-eaten by a desktop icon on the way.
+Three questions, because the weapons are three different kinds:
+
+  flat-fired (blaster, minigun, rocket)  does the round OUTRUN the gap?
+  lobbed     (bow, bomb)                 does it LAND on him?
+  instant    (sword, chainsaw, lightning) does the swing or bolt connect?
+
+Judging a lob by distance is meaningless: a good lob lands exactly on the
+target, so its margin is 1.0 by construction. Judging a flat weapon by whether
+it hits a stationary target is just as useless -- at the firing distance they
+all do. The target moves, so what matters is how much road is left.
+
+Two shipped without any. Aimed three degrees down at the other one's chest from
+a muzzle 39px up, the minigun buried its pellets after 498px and the rocket
+after 353px, both with most of their life still to run, against firing
+distances of 272 and 329. Both were stopped by the FLOOR, so raising the
+lifetime -- the obvious move -- did nothing for either.
+
+Nothing here carries its own copy of a projectile constant. An earlier version
+did, and reported the old numbers after they had been changed.
 """
 import importlib.util
-import math
 import os
 import random
 import sys
@@ -33,17 +47,26 @@ gm.idle_seconds = lambda: 0.0
 app = gm.App()
 app.poll_cursor = lambda dt: None
 a, b = app.fighters
-a.foe, b.foe = b, a
+GROUND = app.ground_at(900)
+SCALE = .4 + .6 * a.K()
+
+FLAT = ("blaster", "minigun", "rocket")
+LOBBED = ("bow", "bomb")
+INSTANT = ("sword", "chainsaw", "lightning")
+MARGIN = 1.5                    # a flat round must outrun the gap by this much
+SAMPLES = 5                     # the minigun sprays; one sample is noise
+bad = []
 
 
 def set_terrain(with_icons):
-    """A column of icons standing between them, at their own height."""
+    """Optionally a row of icons standing between them, at their own height."""
     t = app.terrain
     icons = []
     if with_icons:
         for i in range(6):
             x = 700 + i * 120
-            icons.append(("Icon %d" % i, x, 940, x + 64, 1004, i))
+            icons.append(("Icon %d" % i, x, int(GROUND) - 80, x + 64,
+                          int(GROUND) - 16, i))
     t.icons, t.windows, t.moved, t.win_pos = icons, [], {}, {}
     t.icons_ok = bool(icons)
     tg, pl = [], []
@@ -57,159 +80,128 @@ def set_terrain(with_icons):
                 for x in tg]
 
 
-hits = {"foe": 0, "icon": 0}
-_hf, _ht = app.hit_fighter, app.hit_target
-app.hit_fighter = lambda att, vic, d: (hits.__setitem__("foe", hits["foe"] + 1),
-                                       _hf(att, vic, d))[1]
-app.hit_target = lambda f, t, x, y: (hits.__setitem__("icon", hits["icon"] + 1),
-                                     _ht(f, t, x, y))[1]
-
-GROUND = app.ground_at(900)
-RANGED = ("bow", "blaster", "rocket", "minigun", "bomb")
-
-
-def trial(weapon, with_icons):
-    set_terrain(with_icons)
-    hits["foe"] = hits["icon"] = 0
-    app.parts, app.shots, app.booms, app.bolts, app.slashes = [], [], [], [], []
-    K = a.K()
-    # exactly how far decide()/the fight state let him open fire from
-    reach = gm.REACH[weapon] * (.4 + .6 * K)
-    a.x, a.y = 640.0, GROUND
-    b.x, b.y = 640.0 + reach * 0.92, GROUND
+def square_up(weapon, gap):
+    """Both on the floor, gap apart, mid-attack with the weapon we asked for."""
+    a.x, a.y = 200.0, GROUND
+    b.x, b.y = 200.0 + gap, GROUND
     for f in (a, b):
         f.vx = f.vy = 0.0
-        f.on_ground = True
-        f.hp = 100.0
-        f.state = "fight"
-        f.hits = 0
-    a.face = 1
-    cx, cy = b.x, b.y - 34 * b.sc
-    # go through start_attack, which is where the aim and the foe-bound flag
-    # are decided; random() pinned to 0 makes it keep the weapon we asked for
-    import random as _r
-    real = _r.random
-    _r.random = lambda: 0.0
-    a.plan = weapon
+        f.on_ground, f.hp, f.stun = True, 100.0, 0.0
+        f.tumble = f.squash = 0.0
+        f.carry = None
+    a.foe, b.foe = b, a
+    a.face, a.plan, a.mode = 1, weapon, "fight"
+    app.shots = []
+    app.parts, app.booms, app.bolts, app.slashes = [], [], [], []
+    real = random.random
+    random.random = lambda: 0.0            # start_attack keeps the plan
     app.start_attack(a, foe=True)
-    _r.random = real
+    random.random = real
     assert a.weapon == weapon, "wanted %s, got %s" % (weapon, a.weapon)
-    a.atk, a.fired, a.burst = 0.0, False, 0.0
-    app.release_attack(a)
-    if weapon == "minigun":                 # fires in a burst, not one shot
-        for _ in range(6):
-            app.shoot(a, "pellet", 1050, 60, .9)
-    launched = len(app.shots)
-    best = 1e9
-    travelled = 0.0
-    x0 = a.x
-    for _ in range(400):
-        for s in app.shots:
-            best = min(best, gm.dist(s["x"], s["y"], cx, cy))
-            travelled = max(travelled, s["x"] - x0)
-        if not app.shots:
+
+
+def fire(weapon, gap, seed):
+    """Let the real attack state release a round. Returns it, or None."""
+    random.seed(seed)
+    square_up(weapon, gap)
+    hits = []
+    real_hit = app.hit_fighter
+    app.hit_fighter = lambda att, vic, d: (hits.append(1), real_hit(att, vic, d))[1]
+    for _ in range(240):
+        if app.shots or hits:
             break
-        app.projectiles(1 / 40.0)
-        if hits["foe"] or hits["icon"]:
+        app.update_fighter(a, 1 / 40.0)
+    app.hit_fighter = real_hit
+    return (app.shots[0] if app.shots else None), bool(hits)
+
+
+def follow(shot):
+    """With the target taken away, how far does it get and what stops it?"""
+    x0 = shot["x"]
+    b.x = 99999.0
+    for _ in range(1200):
+        if shot not in app.shots:
             break
-    gap = b.x - a.x
-    return {"reach": reach, "gap": gap, "launched": launched,
-            "closest": best, "travelled": travelled,
-            "foe": hits["foe"], "icon": hits["icon"]}
-
-
-print("scale %.2f, so K=%.2f: speeds scale by K, reaches by (.4+.6K)=%.2f"
-      % (gm.CFG["scale"], a.K(), .4 + .6 * a.K()))
-print()
-print("%-9s %6s %6s %8s %9s   %s" %
-      ("weapon", "gap", "flew", "closest", "outcome", "with icons between them"))
-bad = []
-for w in RANGED:
-    clean = trial(w, False)
-    dirty = trial(w, True)
-    if clean["foe"]:
-        out = "HIT"
-    elif clean["closest"] < 40:
-        out = "near"
-    else:
-        out = "SHORT"
-    if dirty["foe"] and dirty["icon"]:
-        d = "hit foe, blast also caught an icon"
-    elif dirty["foe"]:
-        d = "hit foe"
-    elif dirty["icon"]:
-        d = "BLOCKED by an icon"
-    else:
-        d = "still short"
-    print("%-9s %6.0f %6.0f %8.0f %9s   %s"
-          % (w, clean["gap"], clean["travelled"], clean["closest"], out, d))
-    if out == "SHORT":
-        bad.append("%s falls short by %.0fpx" % (w, clean["closest"]))
-    if dirty["icon"] and not dirty["foe"]:
-        bad.append("%s is eaten by a desktop icon" % w)
-
-
-# --- how far a round actually gets, and what stops it ---------------------
-# The minigun is the one with no margin to spare: it streams for 1.4s while
-# both of them keep moving, so a round that only just outruns the firing
-# distance falls short constantly. It used to be stopped by the FLOOR rather
-# than by its own lifetime -- he aims three degrees down at the other one's
-# chest, and at the old gravity the rounds ploughed in after 498px with a third
-# of their life left. Raising the lifetime did nothing at all; the fix was to
-# stop them arcing like a thrown rock.
-set_terrain(False)
-for f in (a, b):
-    f.vx = f.vy = 0.0
-    f.on_ground, f.hp, f.stun = True, 100.0, 0.0
-reach = gm.REACH["minigun"] * (.4 + .6 * a.K())
-a.x, a.y = 200.0, GROUND
-b.x, b.y = 200.0 + reach, GROUND
-a.foe, b.foe = b, a
-a.face, a.plan = 1, "minigun"
-app.shots = []
-_r = random.random
-random.random = lambda: 0.0                # make start_attack keep the plan
-app.start_attack(a, foe=True)
-random.random = _r
-for _ in range(200):
-    if app.shots:
-        break
-    app.update_fighter(a, 1 / 40.0)
-
-if not app.shots:
-    bad.append("the minigun never fired a round")
-else:
-    shot = app.shots[0]
-    x0, life0 = shot["x"], shot["life"]
-    b.x = 99999.0                          # out of the way; measure the round
-    flew, floored, ticks = 0.0, False, 0
-    while app.shots and ticks < 800:
-        ticks += 1
         px, py, plife = shot["x"], shot["y"], shot["life"]
         app.projectiles(1 / 40.0)
         if shot not in app.shots:
-            flew = abs(px - x0)
-            floored = py >= app.ground_at(px) - 12 and plife > 1 / 20.0
-            break
-    ratio = flew / reach if reach else 0.0
-    print()
-    print("minigun round: flew %.0fpx against a %.0fpx firing distance (%.2fx),"
-          % (flew, reach, ratio))
-    print("               stopped by %s"
-          % ("the floor" if floored else "running out of life"))
-    if floored:
-        bad.append("minigun rounds are being stopped by the ground")
-    if ratio < 1.8:
-        bad.append("minigun round only outruns its firing distance by %.2fx"
-                   % ratio)
+            # life first: at the boundary a round satisfies both conditions,
+            # and calling that "the floor" sent me hunting a fault that was
+            # not there
+            return abs(px - x0), ("ran out of life" if plife <= 1 / 20.0
+                                  else "hit the floor"
+                                  if py >= app.ground_at(px) - 12
+                                  else "left the screen")
+    return 0.0, "still flying"
 
-print()
+
+def connects(weapon, gap, with_icons=False, seed=1):
+    """Fire at a target standing at gap, and see if it is hit."""
+    set_terrain(with_icons)
+    random.seed(seed)
+    square_up(weapon, gap)
+    hits, iconed = [], []
+    real_hit, real_t = app.hit_fighter, app.hit_target
+    app.hit_fighter = lambda att, vic, d: (hits.append(1), real_hit(att, vic, d))[1]
+    app.hit_target = lambda f, t, x, y: (iconed.append(1), real_t(f, t, x, y))[1]
+    for _ in range(400):
+        if hits:
+            break
+        app.update_fighter(a, 1 / 40.0)
+        app.projectiles(1 / 40.0)
+    app.hit_fighter, app.hit_target = real_hit, real_t
+    return bool(hits), bool(iconed)
+
+
+# --- 1. does each weapon connect at the range it fires from, icons or not ---
+print("scale %.2f, so the AI opens fire at REACH x %.2f"
+      % (gm.CFG["scale"], SCALE))
+print("")
+print("%-10s %7s  %-22s %s" % ("weapon", "fires@", "against a standing target",
+                               "with icons between"))
+for w in INSTANT + LOBBED + FLAT:
+    reach = gm.REACH[w] * SCALE
+    clean, _ = connects(w, reach, False)
+    dirty, ic = connects(w, reach, True)
+    note = "hit" if clean else "MISSED"
+    dnote = ("hit" if dirty else "BLOCKED" if ic else "missed")
+    if not clean:
+        bad.append("%s misses a standing target at its own firing distance" % w)
+    if not dirty and ic:
+        bad.append("%s is stopped by a desktop icon" % w)
+    print("%-10s %7.0f  %-22s %s" % (w, reach, note, dnote))
+
+# --- 2. how much road a flat round has left past that distance -------------
+set_terrain(False)
+print("")
+print("%-10s %7s %8s %7s  %s"
+      % ("weapon", "fires@", "can fly", "margin", "stopped by"))
+for w in LOBBED + FLAT:
+    reach = gm.REACH[w] * SCALE
+    runs = []
+    for i in range(SAMPLES):
+        shot, hit = fire(w, reach, 1000 + i)
+        if shot is None:
+            continue
+        runs.append(follow(shot))
+    if not runs:
+        bad.append("%s never released a round" % w)
+        continue
+    runs.sort()
+    flown, cause = runs[len(runs) // 2]          # median of the samples
+    ratio = flown / reach if reach else 0.0
+    print("%-10s %7.0f %8.0f %7.2f  %s" % (w, reach, flown, ratio, cause))
+    if w in FLAT and ratio < MARGIN:
+        bad.append("%s only outruns its firing distance by %.2fx "
+                   "(%s)" % (w, ratio, cause))
+
+print("")
 if bad:
     print("PROBLEMS:")
     for x in bad:
         print("  " + x)
 else:
-    print("all weapons reach, and icons do not intercept")
+    print("every weapon reaches, and the flat ones have road to spare")
 
 try:
     app.tray.remove()

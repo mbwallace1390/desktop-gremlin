@@ -2446,7 +2446,12 @@ class App:
                                "g": 900 * k, "life": 2.2, "trail": [],
                                "spin": 0.0, "pierce": f.at_foe})
         elif w == "rocket":
-            self.shoot(f, "rocket", 560, 40, 3.2)
+            # Same disease the minigun had: gravity, not lifetime, was
+            # what stopped these. Aimed three degrees down from a muzzle
+            # only 39px up, gravity 40 buried them after 353px against a
+            # 329px firing distance -- a margin of 1.07, which is none.
+            # A rocket is powered; it should not arc.
+            self.shoot(f, "rocket", 680, 5, 3.2)
             self.puff(*self.muzzle(f), 6, "#C9D3F0", k, 10)
             self.shake(.14, 5 * k)
         elif w == "lightning":

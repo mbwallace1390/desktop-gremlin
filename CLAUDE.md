@@ -10,7 +10,7 @@ Windows only — it talks to the Explorer shell directly.
 python tests\run_all.py
 ```
 
-Ten checks, about two seconds, nothing to install. Each one encodes a bug that
+Thirteen checks, a few seconds, nothing to install. Each one encodes a bug that
 actually shipped. They build a real Tk window and a real `App`, so windows
 flash on screen while they run; none of them touch your desktop icons, because
 the shell is stubbed out.
@@ -103,6 +103,17 @@ as +168 items and +25% of the frame. `FACE` is light because it is drawn on top
 of the black head; it used to be near-black on a coloured one, which is why the
 per-mood expressions were invisible.
 
+**A round has to outrun the distance it is fired from, and gravity is usually
+what stops it.** The fight state walks him to `REACH[weapon]` scaled; a round
+that only just covers that falls short the moment either of them moves, which
+is most of the time. Both the minigun and the rocket shipped stopped by the
+FLOOR rather than by their own lifetime — aimed three degrees down at the other
+one's chest from a muzzle 39px up, they buried themselves at 498px and 353px
+with most of their life left. Raising the lifetime, the obvious move, did
+nothing for either; cutting gravity did. `tests/test_weapon_range.py` holds the
+line at 1.5x, and judges lobs (bow, bomb) on whether they land instead, because
+a good lob is 1.0x by construction.
+
 **Every new drawing call has to pick a layer.** Canvas items are pooled and
 reused rather than recreated, and Tk draws in creation order, so stacking comes
 from `_frame_end()` raising the layer tags in a fixed sequence. A `self.line()`
@@ -151,9 +162,11 @@ and blast radius still catches icons either way.
 no two may share a line — `tests/test_voices.py` fails on either, and a missing
 key is a `KeyError` in the middle of a fight.
 
-**The cast is data, and `ROSTER` is the order they join in.** Colour comes from
-`BASECOL` through `palette()`, which derives the six mood shades rather than
-hand-picking sixty. Temperament is `TRAITS`: `aggro`, `chatty`, `grudge`,
+**The cast is data, and `ROSTER` is the order they join in.** The halo colour
+comes from `BASECOL` through `palette()`, which derives the six mood shades
+rather than hand-picking sixty. Each character keeps its own base, so the halo
+carries identity *and* mood at once — that is why making the bodies black cost
+nothing in telling them apart. Temperament is `TRAITS`: `aggro`, `chatty`, `grudge`,
 `dash`, `hops`, `thief`, `nerve`. Every one is wired to arithmetic that already
 existed except `nerve`, the health he breaks off a fight at.
 

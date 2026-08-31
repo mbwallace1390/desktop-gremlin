@@ -13,6 +13,9 @@ Then they climb on all of it, and fight each other.
 
 ![Every pose and weapon](docs/poses.png)
 
+*(That picture predates the black-figure redesign — the poses and weapons
+are current, the colours are not.)*
+
 ---
 
 ## Install
@@ -108,11 +111,11 @@ two is always the same two and their records carry over between runs.
 | 9 | Drama | over-reacts to everything, sulks longest |
 | 10 | Veteran | economical, few words, efficient |
 
-Each has its own colour, its own temperament — how readily it picks a fight,
-how much it talks, how fast it moves, how often it jumps, how likely it is to
-steal rather than smash, and how much punishment it takes before breaking off
-— and its own dialogue, right down to what it says when you pick it up. No two
-of them share a line.
+The figures are all the same black. Each one has its own **halo colour**, its
+own temperament — how readily it picks a fight, how much it talks, how fast it
+moves, how often it jumps, how likely it is to steal rather than smash, and how
+much punishment it takes before breaking off — and its own dialogue, right down
+to what it says when you pick it up. No two of them share a line.
 
 It's a free-for-all: everyone goes for whoever is nearest. They chase, strike,
 knock each other flying, with a deliberate beat between strikes so a fight is
@@ -284,7 +287,7 @@ screenshot.
 python tests\run_all.py
 ```
 
-Twelve checks, a couple of seconds, nothing to install. They drive the real app
+Thirteen checks, a few seconds, nothing to install. They drive the real app
 with the Windows shell stubbed out, so they never touch your desktop. Every one
 of them encodes a bug that actually shipped.
 

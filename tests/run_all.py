@@ -26,7 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # name -> file, in rough order of how fast they are
 CHECKS = [
-    ("voices", "test_voices.py", "every line both of them can say"),
+    ("voices", "test_voices.py", "every line all ten of them can say"),
     ("memory", "test_memory.py", "what they remember between runs"),
     ("gait", "test_gait.py", "which way the legs cycle"),
     ("joints", "test_joints.py", "which way knees and elbows bow"),
@@ -37,6 +37,7 @@ CHECKS = [
     ("fight", "test_fight_choice.py", "firing the weapon he closed for"),
     ("behaviour", "test_behaviour.py", "greeting, context, rivalry"),
     ("crowd", "test_crowd.py", "one to ten, all behaving differently"),
+    ("docs", "test_docs.py", "the docs still describe the code"),
     ("roaming", "test_roaming.py", "not getting stuck, leaving and returning"),
 ]
 

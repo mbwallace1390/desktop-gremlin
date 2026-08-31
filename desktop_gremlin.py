@@ -1312,8 +1312,13 @@ def line_for_icon(f, name):
 WEAPONS = ["sword", "bow", "blaster", "bomb", "rocket", "minigun", "chainsaw", "lightning"]
 ATKDUR = {"sword": .42, "bow": .85, "blaster": .75, "bomb": .60,
           "rocket": .90, "minigun": 1.40, "chainsaw": 1.20, "lightning": .80}
+# How far off he opens fire. A round has to comfortably outrun the number here
+# or it dies in the air, and the minigun needs the widest margin of the lot
+# because it streams for 1.4s while both of them keep moving. Measured before
+# this changed: pellets flew 357px against a 241px firing distance, a margin of
+# 1.48 where the blaster had 1.84.
 REACH = {"sword": 40, "bow": 480, "blaster": 420, "bomb": 230,
-         "rocket": 520, "minigun": 380, "chainsaw": 34, "lightning": 560}
+         "rocket": 520, "minigun": 430, "chainsaw": 34, "lightning": 560}
 MELEE = ("sword", "chainsaw")
 
 MOODS = ("bored", "hyped", "furious", "smug", "sulking", "asleep")
@@ -2831,7 +2836,12 @@ class App:
                         f.burst = .07
                         f.aim = math.atan2(self.aim_point(f)[1] - (f.y - 58 * f.sc),
                                            self.aim_point(f)[0] - f.x) + random.uniform(-.06, .06)
-                        self.shoot(f, "pellet", 1050, 60, .9)
+                        # Gravity, not lifetime, was what stopped these. He aims
+                        # 3 degrees down at the other one's chest, so at the old
+                        # 60 they ploughed into the floor after 498px with a
+                        # third of their life left. A minigun round should not
+                        # arc like a thrown rock.
+                        self.shoot(f, "pellet", 1350, 10, 1.15)
                         self.shake(.05, 1.6 * K)
             elif f.weapon == "chainsaw":
                 if .2 < f.atk < f.atk_dur - .1:

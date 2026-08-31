@@ -8,6 +8,7 @@ eaten by a desktop icon on the way.
 import importlib.util
 import math
 import os
+import random
 import sys
 
 _TESTS = os.path.dirname(os.path.abspath(__file__))
@@ -146,6 +147,61 @@ for w in RANGED:
         bad.append("%s falls short by %.0fpx" % (w, clean["closest"]))
     if dirty["icon"] and not dirty["foe"]:
         bad.append("%s is eaten by a desktop icon" % w)
+
+
+# --- how far a round actually gets, and what stops it ---------------------
+# The minigun is the one with no margin to spare: it streams for 1.4s while
+# both of them keep moving, so a round that only just outruns the firing
+# distance falls short constantly. It used to be stopped by the FLOOR rather
+# than by its own lifetime -- he aims three degrees down at the other one's
+# chest, and at the old gravity the rounds ploughed in after 498px with a third
+# of their life left. Raising the lifetime did nothing at all; the fix was to
+# stop them arcing like a thrown rock.
+set_terrain(False)
+for f in (a, b):
+    f.vx = f.vy = 0.0
+    f.on_ground, f.hp, f.stun = True, 100.0, 0.0
+reach = gm.REACH["minigun"] * (.4 + .6 * a.K())
+a.x, a.y = 200.0, GROUND
+b.x, b.y = 200.0 + reach, GROUND
+a.foe, b.foe = b, a
+a.face, a.plan = 1, "minigun"
+app.shots = []
+_r = random.random
+random.random = lambda: 0.0                # make start_attack keep the plan
+app.start_attack(a, foe=True)
+random.random = _r
+for _ in range(200):
+    if app.shots:
+        break
+    app.update_fighter(a, 1 / 40.0)
+
+if not app.shots:
+    bad.append("the minigun never fired a round")
+else:
+    shot = app.shots[0]
+    x0, life0 = shot["x"], shot["life"]
+    b.x = 99999.0                          # out of the way; measure the round
+    flew, floored, ticks = 0.0, False, 0
+    while app.shots and ticks < 800:
+        ticks += 1
+        px, py, plife = shot["x"], shot["y"], shot["life"]
+        app.projectiles(1 / 40.0)
+        if shot not in app.shots:
+            flew = abs(px - x0)
+            floored = py >= app.ground_at(px) - 12 and plife > 1 / 20.0
+            break
+    ratio = flew / reach if reach else 0.0
+    print()
+    print("minigun round: flew %.0fpx against a %.0fpx firing distance (%.2fx),"
+          % (flew, reach, ratio))
+    print("               stopped by %s"
+          % ("the floor" if floored else "running out of life"))
+    if floored:
+        bad.append("minigun rounds are being stopped by the ground")
+    if ratio < 1.8:
+        bad.append("minigun round only outruns its firing distance by %.2fx"
+                   % ratio)
 
 print()
 if bad:

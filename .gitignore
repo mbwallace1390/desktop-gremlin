@@ -3,6 +3,8 @@
 gremlin_icon_backup.json
 gremlin_settings.json
 gremlin.ico
+# gremlin_memory.json is counters plus the icon names they pick on most.
+gremlin_memory.json
 
 # Python
 __pycache__/

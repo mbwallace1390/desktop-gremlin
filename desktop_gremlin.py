@@ -171,6 +171,177 @@ def save_settings(s):
 CFG = load_settings()
 
 
+# ==========================================================================
+#  MEMORY  — what they remember about you between runs
+# ==========================================================================
+# Counters, never a log. Nothing about which applications you use is written
+# to disk: the context they react to (below) lives in RAM and dies with the
+# process. The only names stored are desktop icon labels, which
+# gremlin_icon_backup.json already holds. Settings has a "Forget everything"
+# button, and deleting the file does the same job.
+MEMORY_PATH = os.path.join(HERE, "gremlin_memory.json")
+MEM_KEYS = ("thrown", "grabbed", "wins", "losses", "icons_moved", "streak")
+MEM_DIRTY = False
+
+
+def blank_memory():
+    return {"version": 1, "runs": 0, "icons": {},
+            "gremlin": dict.fromkeys(MEM_KEYS, 0),
+            "rival": dict.fromkeys(MEM_KEYS, 0)}
+
+
+def load_memory():
+    """Read it if it is there, and never trust a number in it."""
+    m = blank_memory()
+    try:
+        with open(MEMORY_PATH, "r", encoding="utf-8") as f:
+            got = json.load(f)
+    except Exception:
+        return m
+    if not isinstance(got, dict):
+        return m
+    if isinstance(got.get("runs"), int):
+        m["runs"] = min(max(got["runs"], 0), 10 ** 6)
+    for kind in ("gremlin", "rival"):
+        was = got.get(kind)
+        if not isinstance(was, dict):
+            continue
+        for k in MEM_KEYS:
+            v = was.get(k)
+            if isinstance(v, int) and not isinstance(v, bool):
+                m[kind][k] = min(max(v, -999), 10 ** 6)
+    icons = got.get("icons")
+    if isinstance(icons, dict):
+        for name, n in list(icons.items())[:40]:
+            if isinstance(name, str) and isinstance(n, int) and 0 < n < 10 ** 6:
+                m["icons"][name[:40]] = n
+    return m
+
+
+MEM = load_memory()
+
+
+def bump(kind, key, n=1):
+    """Nudge a counter. The write itself is throttled by the frame loop."""
+    global MEM_DIRTY
+    MEM[kind][key] = MEM[kind].get(key, 0) + n
+    MEM_DIRTY = True
+
+
+def bump_icon(name):
+    global MEM_DIRTY
+    name = (name or "")[:40]
+    if not name:
+        return
+    ic = MEM["icons"]
+    ic[name] = ic.get(name, 0) + 1
+    if len(ic) > 24:                     # keep the favourites, drop the one-offs
+        for k in sorted(ic, key=ic.get)[:len(ic) - 16]:
+            del ic[k]
+    MEM_DIRTY = True
+
+
+def favourite_icon():
+    """The one they have picked on most. None on a fresh install."""
+    ic = MEM["icons"]
+    if not ic:
+        return None
+    best = max(ic, key=ic.get)
+    return best if ic[best] >= 3 else None
+
+
+def save_memory():
+    global MEM_DIRTY
+    if not MEM_DIRTY:
+        return
+    try:
+        with open(MEMORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(MEM, f, indent=1)
+        MEM_DIRTY = False
+    except Exception as exc:
+        print("could not save memory:", exc)
+
+
+def forget_memory():
+    """Wipe what they know about you. Back to strangers."""
+    global MEM, MEM_DIRTY
+    MEM = blank_memory()
+    MEM_DIRTY = True
+    save_memory()
+
+
+GREET_EVENTS = ("hello", "remember_runs", "remember_throws", "remember_fights")
+
+
+def greeting_event(kind):
+    """Only bring up a number that is actually worth bringing up."""
+    m = MEM[kind]
+    if MEM["runs"] <= 1:
+        return "hello"
+    if m["thrown"] >= 5:
+        return "remember_throws"
+    if m["wins"] + m["losses"] >= 3:
+        return "remember_fights"
+    return "remember_runs"
+
+
+# ==========================================================================
+#  CONTEXT  — what you are actually doing, in RAM only
+# ==========================================================================
+CONTEXT_EVENTS = ("ctx_thrash", "ctx_focused", "ctx_marathon", "ctx_late",
+                  "ctx_unsaved")
+
+
+class Watcher:
+    """Notices the shape of your session rather than its content. None of this
+    is written anywhere; it is rebuilt from scratch every launch.
+
+    Each remark has its own long cooldown on top of a global one, because the
+    difference between a desktop pet you keep and one you uninstall is how
+    often it decides to be clever at you."""
+
+    def __init__(self):
+        self.fg = None
+        self.since = 0.0          # when the current window took focus
+        self.switches = []        # recent focus-change times
+        self.said = {}            # event -> when it last fired
+        self.quiet_until = 45.0   # nothing at all for the first three quarters
+        self.next_check = 0.0
+
+    def note_focus(self, hwnd, now):
+        if hwnd == self.fg:
+            return
+        self.fg = hwnd
+        self.since = now
+        self.switches.append(now)
+        del self.switches[:-40]
+
+    def pick(self, now, title, session):
+        """The one thing worth remarking on right now, or None."""
+        if now < self.quiet_until or now < self.next_check:
+            return None
+        self.next_check = now + 1.0       # this runs off the frame loop
+        want = []
+        if sum(1 for t in self.switches if now - t < 60) >= 12:
+            want.append(("ctx_thrash", 300))
+        if now - self.since > 900:
+            want.append(("ctx_focused", 600))
+        if session > 3 * 3600:
+            want.append(("ctx_marathon", 1800))
+        if 1 <= time.localtime().tm_hour < 5:
+            want.append(("ctx_late", 1500))
+        t = (title or "").strip()
+        if t[:1] in ("*", "\u25cf", "\u2022") or "unsaved" in t.lower():
+            want.append(("ctx_unsaved", 420))
+        want = [(e, cd) for e, cd in want if now - self.said.get(e, -1e9) > cd]
+        if not want:
+            return None
+        ev = random.choice(want)[0]
+        self.said[ev] = now
+        self.quiet_until = now + 120
+        return ev
+
+
 def set_run_at_startup(on):
     """A Run-key entry, so it's trivially removable in Task Manager > Startup."""
     try:
@@ -835,6 +1006,12 @@ class SettingsWindow:
                   relief="flat", font=("Segoe UI", 9), bd=0).grid(
             row=row, column=0, columnspan=2, sticky="we", padx=14, pady=(14, 4))
         row += 1
+        tk.Button(self.win, text="Make them forget everything about me",
+                  command=self.forget, bg="#2A3150", fg="#C9D3F0",
+                  activebackground="#39426B", relief="flat",
+                  font=("Segoe UI", 9), bd=0).grid(
+            row=row, column=0, columnspan=2, sticky="we", padx=14, pady=(0, 4))
+        row += 1
 
         bar = tk.Frame(self.win, bg="#171B2C")
         bar.grid(row=row, column=0, columnspan=2, sticky="we", padx=10, pady=12)
@@ -855,6 +1032,10 @@ class SettingsWindow:
         self.status.config(
             text=f"Put {n} icon(s) back." if n else "No saved layout found.",
             fg="#63E0A8" if n else "#FF5B47")
+
+    def forget(self):
+        forget_memory()
+        self.status.config(text="Forgotten. You're strangers again.", fg="#63E0A8")
 
     def apply(self):
         for k, v in self.vars.items():
@@ -1096,6 +1277,31 @@ VOICES = {
         "summoned": ["coming", "WHAT", "this better be good", "yes? YES?"],
         "generic":  ["mine now", "what's this then", "hm", "I'll allow it",
                      "suspicious", "bin it"],
+        # continuity: {runs} {throws} {wins} {losses} are always supplied
+        "hello":            ["right. who's in charge here", "new desktop. MINE.",
+                             "let's see what you've got"],
+        "remember_runs":    ["day {runs} of this", "run {runs}. still here.",
+                             "back again. {runs} times now."],
+        "remember_throws":  ["you've thrown me {throws} times",
+                             "{throws} throws. I'm counting.",
+                             "{throws}. that's the number. {throws}."],
+        "remember_fights":  ["{wins} and {losses}. I'm rounding up.",
+                             "{wins} wins. verified.",
+                             "the record says {wins}-{losses}"],
+        "fav_icon":         ["you AGAIN", "we meet again, {name}", "my old enemy",
+                             "{name}. every time."],
+        "revenge":          ["not this time", "I've been practising",
+                             "THIS one's mine", "no. NO."],
+        "gangup":           ["get it get it get it", "both of us. now.", "TEAM UP"],
+        "ctx_thrash":       ["pick ONE", "make your MIND up",
+                             "that's nine windows in a minute"],
+        "ctx_focused":      ["still on this?", "you've not moved in ages",
+                             "blink. please blink."],
+        "ctx_marathon":     ["go OUTSIDE", "you've been here for hours",
+                             "stand up. STAND UP."],
+        "ctx_late":         ["it's the middle of the night", "go to BED",
+                             "nothing good happens at this hour"],
+        "ctx_unsaved":      ["SAVE IT", "you've not saved", "ctrl-s. CTRL-S."],
     },
     "rival": {
         "bored":    ["...", "riveting", "*sigh*", "is this it",
@@ -1133,6 +1339,31 @@ VOICES = {
         "summoned": ["what.", "this had better matter", "yes?", "I'm busy"],
         "generic":  ["mine, I think", "what IS that", "hm", "questionable",
                      "delete it", "who made this"],
+        "hello":            ["so this is it.", "hm. we'll see.",
+                             "let's have a look at you"],
+        "remember_runs":    ["run {runs}.", "attempt {runs}.",
+                             "{runs} sessions. still no improvement."],
+        "remember_throws":  ["throw count: {throws}. noted.",
+                             "{throws} throws. all recorded.",
+                             "we're at {throws}. I'll wait."],
+        "remember_fights":  ["{wins} to {losses}. do the maths.",
+                             "record: {wins}-{losses}.",
+                             "{losses} losses. I've moved on."],
+        "fav_icon":         ["{name}. of course.", "you and I have history",
+                             "not {name} again", "we're back to {name}"],
+        "revenge":          ["no.", "not again", "I've adjusted",
+                             "we're doing this properly"],
+        "gangup":           ["together, then", "on three", "you take that side"],
+        "ctx_thrash":       ["decide.", "pick a window.",
+                             "this is exhausting to watch"],
+        "ctx_focused":      ["you've been staring at that a while", "still?",
+                             "it hasn't changed, you know"],
+        "ctx_marathon":     ["hours. it's been hours.", "you should stand up",
+                             "this isn't healthy"],
+        "ctx_late":         ["it's late.", "look at the time",
+                             "nothing you write now will be good"],
+        "ctx_unsaved":      ["unsaved.", "you haven't saved.",
+                             "one crash and that's gone"],
     },
 }
 
@@ -1294,6 +1525,10 @@ class App:
         self.fg = None
         self.asleep = False
         self.icons_locked = False
+        self.watch = Watcher()
+        self.awake_since = 0.0
+        self.greeted = False
+        self.mem_saved = 0.0
 
         # Canvas item pool. Items are moved and recoloured frame to frame
         # instead of being deleted and rebuilt. Tk draws in creation order, so
@@ -1399,6 +1634,10 @@ class App:
     def quit(self):
         self.running = False
         try:
+            save_memory()
+        except Exception:
+            pass
+        try:
             self.tray.remove()
         except Exception:
             pass
@@ -1436,6 +1675,7 @@ class App:
         f.gx, f.gy = e.x + self.ox, e.y + self.oy + 58 * f.sc
         f.set_state("grabbed")
         f.anger = clamp(f.anger + .28 * f.per["grudge"], 0, 1)
+        bump(f.kind, "grabbed")
         f.boredom = 0
         self.drop_icon(f)
         f.yell("grabbed", 1.5)
@@ -1456,6 +1696,7 @@ class App:
             f.vx = clamp(self.mouse["vx"], -1300, 1300) * lk
             f.vy = clamp(self.mouse["vy"], -1300, 1300) * lk - 120 * f.K()
             f.vr = clamp(f.vx / (110 * f.K()), -13, 13)
+            bump(f.kind, "thrown")
             f.set_state("thrown")
             f.yell("thrown", 1.4)
 
@@ -1553,6 +1794,8 @@ class App:
         f.wander_to = clamp(f.x + random.uniform(-620, 620), self.ox + 90,
                             self.ox + self.W - 90)
         f.carry_dest_y = clamp(gy - random.uniform(60, 420), 40, gy - 60)
+        bump(f.kind, "icons_moved")
+        bump_icon(f.carry["name"])
         f.yell("snatch", 1.6, name=f.carry["name"][:12] or "that")
         return True
 
@@ -1711,6 +1954,11 @@ class App:
             vic.hp = 0
             vic.set_state("ko")
             vic.vr = random.uniform(-9, 9)
+            # a running score, so a losing streak can mean something later
+            bump(att.kind, "wins")
+            bump(vic.kind, "losses")
+            MEM[att.kind]["streak"] = max(1, MEM[att.kind]["streak"] + 1)
+            MEM[vic.kind]["streak"] = min(-1, MEM[vic.kind]["streak"] - 1)
             vic.yell("ko", 1.6)
             att.anger = .2
             att.set_mood("smug")
@@ -1752,12 +2000,22 @@ class App:
 
         # pick a fight with the other one
         if f.foe and f.foe.hp > 0 and f.foe.state not in ("ko", "grabbed"):
-            p = (.30 if rage else .16) * f.per["aggro"]
+            # losing repeatedly makes him keener, and he brings it up
+            losing = MEM[f.kind]["streak"] <= -2
+            p = (.30 if rage else .16) * f.per["aggro"] * (1.6 if losing else 1.0)
             if r < p:
                 f.mode = "fight"
                 f.plan = plan_weapon(f.per, rage)
                 f.set_state("fight")
-                f.yell("fight", 1.4)
+                f.yell("revenge" if losing else "fight", 1.4)
+                return
+            # two of them on one icon beats two of them on two icons
+            if f.foe.target and f.foe.state == "hunt" and r < p + .10:
+                f.target = f.foe.target
+                f.hits = 0
+                f.plan = plan_weapon(f.per, rage)
+                f.set_state("hunt")
+                f.yell("gangup", 1.4)
                 return
 
         if self.time - self.mouse["t"] < 4 and \
@@ -1777,10 +2035,19 @@ class App:
             return
 
         if alive and (rage or bored or r < .70):
-            if rage:
-                t = min(alive, key=lambda a: dist(f.x, f.y, a["cx"], a["cy"]))
-            else:
-                t = random.choice(alive)
+            # they develop a grudge against one particular icon over time
+            fav = favourite_icon()
+            t = None
+            if fav and not rage and random.random() < .20:
+                for a in alive:
+                    if a["kind"] == "icon" and a["name"] == fav:
+                        t = a
+                        break
+            if t is None:
+                if rage:
+                    t = min(alive, key=lambda a: dist(f.x, f.y, a["cx"], a["cy"]))
+                else:
+                    t = random.choice(alive)
             f.target = t
             f.hits = 0
             f.plan = plan_weapon(f.per, rage)
@@ -1792,8 +2059,11 @@ class App:
             if CFG["react_to_windows"] and self.time - f.said > 7 / chat \
                     and random.random() < .5 * chat:
                 f.said = self.time
-                f.say(line_for_icon(f, t["name"]) if t["kind"] == "icon"
-                      else line_for_title(f, t["name"]), 1.8)
+                if t["kind"] == "icon" and fav and t["name"] == fav:
+                    f.yell("fav_icon", 1.8, name=fav[:14])
+                else:
+                    f.say(line_for_icon(f, t["name"]) if t["kind"] == "icon"
+                          else line_for_title(f, t["name"]), 1.8)
             far = abs(t["cx"] - f.x) > 460 or t["top"] < f.y - 190
             if far and f.on_ground and random.random() < .6:
                 self.fire_hook(f, t["cx"], t["top"] - 26)
@@ -2174,10 +2444,24 @@ class App:
     def update(self, dt):
         self.time += dt
 
+        was_asleep = self.asleep
         if CFG["sleep_when_idle"]:
             self.asleep = idle_seconds() > CFG["idle_minutes"] * 60
         else:
             self.asleep = False
+        if was_asleep and not self.asleep:
+            self.awake_since = self.time      # a nap ends the sitting
+
+        if not self.greeted and self.time > 5 and not self.asleep:
+            self.greeted = True
+            f = random.choice(self.fighters)
+            m = MEM[f.kind]
+            f.yell(greeting_event(f.kind), 2.6, runs=MEM["runs"],
+                   throws=m["thrown"], wins=m["wins"], losses=m["losses"])
+
+        if MEM_DIRTY and self.time - self.mem_saved > 60:
+            self.mem_saved = self.time
+            save_memory()
 
         if self.time - self.terrain.last > TERRAIN_HZ:
             self.terrain.last = self.time
@@ -2215,6 +2499,16 @@ class App:
                                 f.plan = plan_weapon(f.per)
                                 f.set_state("hunt")
                                 break
+            self.watch.note_focus(fg[1] if fg else None, self.time)
+            ev = self.watch.pick(self.time, fg[0] if fg else "",
+                                 self.time - self.awake_since)
+            if ev:
+                free = [f for f in self.fighters
+                        if f.state in ("idle", "walk", "taunt", "hunt")]
+                if free:
+                    f = random.choice(free)
+                    f.said = self.time
+                    f.yell(ev, 2.6)
 
         for f in self.fighters:
             self.update_fighter(f, dt)
@@ -2960,6 +3254,7 @@ def main():
     print(f"  DESKTOP GREMLIN v{VERSION} — overlay edition")
     print("=" * 60)
 
+    MEM["runs"] += 1
     state = backup_layout()
     if state == "saved":
         print("  Saved your desktop icon layout to gremlin_icon_backup.json")

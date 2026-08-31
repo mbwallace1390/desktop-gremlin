@@ -3165,10 +3165,14 @@ class App:
         head = (neck[0] + hx2, neck[1] + hy2)
 
         lw = max(2, round(4.6 * S))
-        kneeL = ik(px, py, fL[0], fL[1], 16, 16, 1)
-        kneeR = ik(px, py, fR[0], fR[1], 16, 16, 1)
-        elbL = ik(neck[0], neck[1] - 1, hL[0], hL[1], 13, 13, -1)
-        elbR = ik(neck[0], neck[1] - 1, hR[0], hR[1], 13, 13, -1)
+        # Bend signs are which side the joint bulges towards, in local space
+        # where +x is the way he faces. A knee leads and the shin trails it; an
+        # elbow trails and the forearm swings ahead of it. Reversed, the knees
+        # bow like a bird's and he reads as running the other way.
+        kneeL = ik(px, py, fL[0], fL[1], 16, 16, -1)
+        kneeR = ik(px, py, fR[0], fR[1], 16, 16, -1)
+        elbL = ik(neck[0], neck[1] - 1, hL[0], hL[1], 13, 13, 1)
+        elbR = ik(neck[0], neck[1] - 1, hR[0], hR[1], 13, 13, 1)
 
         self.layer(tb)
         self.line((*P(px, py), *P(*kneeL), *P(*fL)), col, lw)

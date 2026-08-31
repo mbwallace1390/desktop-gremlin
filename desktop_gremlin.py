@@ -58,6 +58,22 @@ DEBUG = "--debug" in sys.argv
 HERE = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(HERE, "gremlin_settings.json")
 BACKUP_PATH = os.path.join(HERE, "gremlin_icon_backup.json")
+LOG_PATH = os.path.join(HERE, "gremlin_log.txt")
+
+
+def start_log():
+    """Launched with pythonw there is no console, so sys.stdout and sys.stderr
+    are None and every diagnostic in this file goes nowhere -- including the
+    tracebacks Tk catches for us. Send them to a file instead. Truncated each
+    run, so it stays small and always describes the run that just failed."""
+    if sys.stderr is not None:
+        return None
+    try:
+        f = open(LOG_PATH, "w", encoding="utf-8", buffering=1)
+    except Exception:
+        return None
+    sys.stdout = sys.stderr = f
+    return f
 
 
 # --------------------------------------------------------------------------
@@ -820,6 +836,7 @@ class Tray:
 
     def __init__(self, tip="Desktop Gremlin"):
         self.items = []              # (label, callback, kind) kind: cmd|check|sep
+        self.pending = []            # menu actions waiting for the Tk loop
         self.hwnd = 0
         self.hicon = 0
         self.added = False
@@ -901,11 +918,23 @@ class Tray:
         if 0 <= idx < len(self.items):
             cb = self.items[idx][1]
             if cb:
-                try:
-                    cb()
-                except Exception as exc:
-                    print("menu action failed:", exc)
+                # Queue it, never run it here. We are inside TrackPopupMenu's
+                # own modal message loop, which is inside PumpWaitingMessages,
+                # which is inside the Tk frame callback. Building or destroying
+                # a widget from there re-enters the interpreter three deep.
+                self.pending.append(cb)
         return True
+
+    def drain(self):
+        """Run queued menu actions on the Tk event loop, where they are safe."""
+        while self.pending:
+            cb = self.pending.pop(0)
+            try:
+                cb()
+            except Exception:
+                import traceback
+                print("menu action failed:")
+                traceback.print_exc()
 
     def _on_destroy(self, hwnd, msg, wparam, lparam):
         self.remove()
@@ -1527,6 +1556,7 @@ class App:
         self.icons_locked = False
         self.watch = Watcher()
         self.shove_at = -9.0      # last time a bullet nudged an icon
+        self.warned = False       # only nag about errors once a run
         self.awake_since = 0.0
         self.greeted = False
         self.mem_saved = 0.0
@@ -1561,6 +1591,11 @@ class App:
         self.tray.sep()
         self.tray.add("Quit", self.quit)
         self.tray.build()
+
+        # Tk catches exceptions raised inside callbacks and prints them to
+        # stderr, which under pythonw is None -- so they vanish completely and
+        # the gremlins just stop doing whatever it was. Log them and say so.
+        self.root.report_callback_exception = self.on_callback_error
 
         # auto-arrange fights us for every icon we try to move
         if CFG["move_icons"]:
@@ -1614,6 +1649,19 @@ class App:
         want = 2 if CFG["rival"] else 1
         if len(self.fighters) != want:
             self.spawn_fighters()
+
+    def on_callback_error(self, exc, val, tb):
+        import traceback
+        print("callback error:")
+        traceback.print_exception(exc, val, tb)
+        if not self.warned:
+            self.warned = True
+            try:
+                self.tray.notify("Desktop Gremlin",
+                                 "Something went wrong. Details are in "
+                                 "gremlin_log.txt next to the script.")
+            except Exception:
+                pass
 
     def toggle_pause(self):
         self.paused = not self.paused
@@ -2928,7 +2976,11 @@ class App:
         tb, th, tf, ta, tw, twd = self._ftag[fi][:6]
         S = f.sc
         st = f.state
-        ph = f.walk
+        # The gait runs on -walk. The planted foot has to travel backwards while
+        # it is on the ground, which is what pushes him along, and the lifted one
+        # swings forward; the other way round is a moonwalk. Negating the phase
+        # reverses the cycle without disturbing the arm/leg opposition.
+        ph = -f.walk
         col = f.color()
         px, py, lean, tilt = 0.0, -30.0, 0.0, 0.0
         fL, fR = (-5.0, 0.0), (6.0, 0.0)
@@ -3280,6 +3332,9 @@ class App:
             dt = min(now - last, .05)
             last = now
             self.tray.pump()
+            self.tray.drain()      # menu actions, clear of the Win32 modal loop
+            if not self.running:   # Quit is one of them
+                return
             try:
                 self.poll_cursor(dt)
                 if not self.paused:
@@ -3317,6 +3372,7 @@ def main():
     print(f"  DESKTOP GREMLIN v{VERSION} — overlay edition")
     print("=" * 60)
 
+    start_log()
     MEM["runs"] += 1
     state = backup_layout()
     if state == "saved":

@@ -5,6 +5,8 @@ gremlin_settings.json
 gremlin.ico
 # gremlin_memory.json is counters plus the icon names they pick on most.
 gremlin_memory.json
+# gremlin_log.txt is only written when there is no console.
+gremlin_log.txt
 
 # Python
 __pycache__/

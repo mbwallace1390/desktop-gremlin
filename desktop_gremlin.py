@@ -1088,6 +1088,11 @@ class SettingsWindow:
 #  math
 # ==========================================================================
 TAU = math.pi * 2
+# How far past the edge of the screen they may get before there is a wall.
+# There used to be a hard ceiling 18px down, which put the top row of desktop
+# icons ABOVE it: they could never stand there, and grabbing that lip trapped
+# them in a grab-jump-bounce-fall loop for as long as you left them.
+OFFSCREEN = 300
 
 
 def clamp(v, a, b):
@@ -1446,6 +1451,8 @@ class Fighter:
         self.blink = 1.0
         self.look = 0.0
         self.wander_to = x
+        self.away = 0.0            # how long he has been off the screen
+        self.ledge_cd = 0.0        # no re-grabbing the lip he just left
         self.squash = 0.0          # >0 land squash, <0 stretch
         self.carry = None          # (icon index, dx, dy offset to list coords)
         self.carry_t = 0.0
@@ -2181,7 +2188,12 @@ class App:
             f.set_state("taunt")
             return
         f.target = None
-        f.wander_to = random.uniform(self.ox + 60, self.ox + self.W - 60)
+        if random.random() < .12:
+            # a trip off the side of the screen, now that there is one to take
+            f.wander_to = (self.ox - 150 if random.random() < .5
+                           else self.ox + self.W + 150)
+        else:
+            f.wander_to = random.uniform(self.ox + 60, self.ox + self.W - 60)
         f.set_state("walk")
 
     # ==================================================================
@@ -2349,6 +2361,7 @@ class App:
                 f.vy = -760 * K
                 f.y -= 4
                 f.on_ground = False
+                f.ledge_cd = self.time + 1.5   # not the same lip twice running
                 f.set_state("jump")
         elif s == "wallslide":
             f.vy = min(f.vy, 150 * K)
@@ -2450,6 +2463,18 @@ class App:
                 if f.hp > 0:
                     f.set_mood("furious" if random.random() < .62 else "sulking")
 
+        # Off the edge for a moment is fine. Gone for good is not.
+        if self.ox - 4 <= f.x <= self.ox + self.W + 4 and f.y <= self.oy + self.H:
+            f.away = 0.0
+        else:
+            f.away += dt
+            if f.away > 5.0 and f.state in ("idle", "walk", "fall", "hunt",
+                                            "taunt", "sleep"):
+                f.away = 0.0
+                f.target = None
+                f.wander_to = clamp(f.x, self.ox + 90, self.ox + self.W - 90)
+                f.set_state("walk")
+
         self.physics(f, dt, gy)
 
         sp = abs(f.vx)
@@ -2476,14 +2501,17 @@ class App:
         f.x += f.vx * dt
         f.y += f.vy * dt
 
-        mrg = 8 + 16 * K
+        # They may leave the screen. Being able to hop over the top row of
+        # icons, or wander off the side and stroll back, is the point; the walls
+        # are only here so nobody exits for good. update_fighter walks anyone
+        # who lingers out there back into view.
         hit_wall = False
-        if f.x < self.ox + mrg:
-            f.x, f.vx, hit_wall = self.ox + mrg, abs(f.vx) * .4, True
-        if f.x > self.ox + self.W - mrg:
-            f.x, f.vx, hit_wall = self.ox + self.W - mrg, -abs(f.vx) * .4, True
-        if f.y < self.oy + 18:
-            f.y, f.vy = self.oy + 18, abs(f.vy) * .3
+        if f.x < self.ox - OFFSCREEN:
+            f.x, f.vx, hit_wall = self.ox - OFFSCREEN, abs(f.vx) * .4, True
+        if f.x > self.ox + self.W + OFFSCREEN:
+            f.x, f.vx, hit_wall = self.ox + self.W + OFFSCREEN, -abs(f.vx) * .4, True
+        if f.y < self.oy - OFFSCREEN:
+            f.y, f.vy = self.oy - OFFSCREEN, abs(f.vy) * .3
 
         if hit_wall and f.vy > 40 * K and f.state in ("fall", "jump"):
             f.set_state("wallslide")
@@ -2519,7 +2547,8 @@ class App:
             f.squash = -.35
 
         # ledge grab: falling past the lip of something, close enough to catch
-        if not f.on_ground and f.vy > 0 and f.state in ("fall", "wallslide"):
+        if not f.on_ground and f.vy > 0 and f.state in ("fall", "wallslide") \
+                and self.time >= f.ledge_cd:
             for x0, x1, py, kind, key in self.terrain.platforms:
                 if py < f.y - 90 * f.sc or py > f.y + 6:
                     continue

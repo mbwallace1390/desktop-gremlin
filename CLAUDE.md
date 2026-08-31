@@ -1,7 +1,7 @@
 # Desktop Gremlin
 
-Two stick figures living on top of the real Windows desktop. One file,
-`desktop_gremlin.py`, ~3000 lines, tkinter + pywin32, no other dependencies.
+One to ten stick figures living on top of the real Windows desktop. One file,
+`desktop_gremlin.py`, ~3900 lines, tkinter + pywin32, no other dependencies.
 Windows only — it talks to the Explorer shell directly.
 
 ## Verify before believing it works
@@ -129,6 +129,30 @@ icons between them soaks up every round. Shots aimed *at* an icon still hit it,
 and blast radius still catches icons either way.
 
 **Adding a line they can say is one table edit.** `VOICES[kind][event]`, and
-`f.yell("event")` at the site. Both characters must carry the same event keys —
-`tests/test_voices.py` fails if they drift, and a missing key is a `KeyError`
-in the middle of a fight.
+`f.yell("event")` at the site. All ten must carry the same 33 event keys, and
+no two may share a line — `tests/test_voices.py` fails on either, and a missing
+key is a `KeyError` in the middle of a fight.
+
+**The cast is data, and `ROSTER` is the order they join in.** Colour comes from
+`BASECOL` through `palette()`, which derives the six mood shades rather than
+hand-picking sixty. Temperament is `TRAITS`: `aggro`, `chatty`, `grudge`,
+`dash`, `hops`, `thief`, `nerve`. Every one is wired to arithmetic that already
+existed except `nerve`, the health he breaks off a fight at.
+
+**`chatty` has to gate something people notice.** It first only gated remarks
+about your windows, and a fivefold spread in the trait produced barely a
+doubling in how much they actually said. It now also gates mood lines, which is
+what makes the Grump quiet and the Drama exhausting.
+
+**Memory is keyed by `ROSTER` under `MEM["who"]`,** not by fighter names sitting
+at the top level beside `version` / `runs` / `icons`. Anything that changes the
+roster orphans the old counters; `load_memory` drops what it does not recognise.
+
+**A remark nobody was free to say has to be handed back.** `Watcher.pick()`
+marks it said and goes quiet for two minutes the moment it returns one, so
+dropping it because every fighter was mid-swing bought two minutes of silence
+for nothing — and with ten of them brawling, that was most of them. Call
+`unsay()`.
+
+**Ten of them cost 5.1 ms of a 25 ms budget**, about 360 canvas items. The
+count is not the thing to worry about; paint is.

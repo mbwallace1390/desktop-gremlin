@@ -23,7 +23,7 @@ gm.MEMORY_PATH = os.path.join(HERE, "rt_memory.json")   # never the real one
 gm.MEM = gm.blank_memory()
 
 gm.CFG.update(gm.DEFAULTS)
-gm.CFG["rival"] = True
+gm.CFG["crowd"] = 2
 gm.CFG["move_icons"] = False
 gm.CFG["sleep_when_idle"] = False
 gm.CFG["all_monitors"] = False
@@ -92,7 +92,7 @@ heard.clear()
 app.watch.quiet_until = 0.0
 app.watch.next_check = 0.0
 app.watch.since = app.time - 1200          # been in one window a long while
-for _ in range(120):
+for _ in range(320):                       # pick() is throttled to 1 Hz
     app.update(1 / 40.0)
 print("context remark        : %s" % ran("ctx_"))
 if not ran("ctx_"):
@@ -108,7 +108,7 @@ print("cooldown holds        : yes (nothing in the next 10s)")
 
 # --- 4. revenge after losing repeatedly -------------------------------------
 heard.clear()
-gm.MEM["gremlin"]["streak"] = -4
+gm.MEM["who"][gm.ROSTER[0]]["streak"] = -4
 random.seed(11)
 for _ in range(400):
     g.foe, r2.foe = r2, g
@@ -125,7 +125,7 @@ if "fight" in [e for k, e in heard]:
 
 # --- 5. ganging up ----------------------------------------------------------
 heard.clear()
-gm.MEM["gremlin"]["streak"] = 0
+gm.MEM["who"][gm.ROSTER[0]]["streak"] = 0
 random.seed(5)
 for _ in range(600):
     g.foe, r2.foe = r2, g

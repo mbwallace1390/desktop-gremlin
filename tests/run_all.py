@@ -36,6 +36,7 @@ CHECKS = [
     ("range", "test_weapon_range.py", "shots reaching their target"),
     ("fight", "test_fight_choice.py", "firing the weapon he closed for"),
     ("behaviour", "test_behaviour.py", "greeting, context, rivalry"),
+    ("crowd", "test_crowd.py", "one to ten, all behaving differently"),
     ("roaming", "test_roaming.py", "not getting stuck, leaving and returning"),
 ]
 

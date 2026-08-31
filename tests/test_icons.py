@@ -53,7 +53,7 @@ def build(move_icons=True):
     gm.MEMORY_PATH = os.path.join(HERE, "sv_memory.json")
     gm.MEM = gm.blank_memory()
     gm.CFG.update(gm.DEFAULTS)
-    gm.CFG["rival"] = True
+    gm.CFG["crowd"] = 2
     gm.CFG["sleep_when_idle"] = False
     gm.CFG["all_monitors"] = False
     gm.CFG["move_icons"] = move_icons

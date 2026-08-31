@@ -1,10 +1,11 @@
 # Desktop Gremlin
 
-Two chaotic stick figures who live **on top of** your real Windows desktop and
-treat your actual icons and open windows as their personal playground.
+One to ten chaotic stick figures who live **on top of** your real Windows
+desktop and treat your actual icons and open windows as their personal
+playground.
 
 They aren't a wallpaper. A wallpaper sits *behind* your icons and can't see
-them. These two sit above everything and read the real thing — where your icons
+them. This lot sit above everything and read the real thing — where your icons
 are and what they're called, where your windows are, which one you just
 clicked, whether you're even at the keyboard.
 
@@ -84,15 +85,37 @@ Roughly a couple of icons every five minutes at default chaos.
 
 ---
 
-## The two of them
+## The cast
 
-The second one is pink. They chase each other, strike, knock each other flying,
-and there's a deliberate beat between strikes so a fight is something you can
-follow rather than a blur. Take enough hits and you're knocked out — X eyes,
-flat on your back — then up again a few seconds later, furious about it. A
-health bar appears over whoever's hurt.
+Ten of them, and you choose how many turn up. They join in a fixed order, so
+two is always the same two and their records carry over between runs.
 
-Set `rival: false` if you'd rather have one.
+| | who | plays like |
+|---|---|---|
+| 1 | Brawler | charges, melee, loudest thing on screen |
+| 2 | Sniper | keeps his distance, ranged, deadpan |
+| 3 | Coward | avoids fights, runs when hurt, apologises |
+| 4 | Show-off | taunts constantly, rockets and lightning |
+| 5 | Grump | slow, quiet, hits hard, complains |
+| 6 | Magpie | ignores the others, steals your icons relentlessly |
+| 7 | Zealot | never retreats, rage-driven, ignores damage |
+| 8 | Tinkerer | bombs, methodical, patient |
+| 9 | Drama | over-reacts to everything, sulks longest |
+| 10 | Veteran | economical, few words, efficient |
+
+Each has its own colour, its own temperament — how readily it picks a fight,
+how much it talks, how fast it moves, how often it jumps, how likely it is to
+steal rather than smash, and how much punishment it takes before breaking off
+— and its own dialogue, right down to what it says when you pick it up. No two
+of them share a line.
+
+It's a free-for-all: everyone goes for whoever is nearest. They chase, strike,
+knock each other flying, with a deliberate beat between strikes so a fight is
+something you can follow rather than a blur. Take enough hits and you're
+knocked out — X eyes, flat on your back — then up again a few seconds later,
+furious about it. A health bar appears over whoever's hurt.
+
+Set `crowd` to anything from 1 to 10.
 
 ## Moods
 
@@ -125,7 +148,7 @@ Everywhere else the overlay is click-through, so it never intercepts your work.
 | `scale` | `0.68` | 0.68 = the height of a desktop icon |
 | `fps` | `40` | |
 | `chaos` | `1.0` | how fast they escalate; scales icon-stealing too |
-| `rival` | `true` | spawn the second one |
+| `crowd` | `2` | how many of them, 1 to 10 |
 | `move_icons` | `false` | let them physically drag your icons |
 | `react_to_windows` | `true` | comment on window titles, follow focus |
 | `sleep_when_idle` | `true` | |

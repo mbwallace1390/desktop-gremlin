@@ -2,8 +2,9 @@
 r"""
 DESKTOP GREMLIN — overlay edition
 =================================
-Two chaotic stick figures who live ON TOP of your real Windows desktop and
-treat your actual icons and open windows as their personal playground.
+A cast of chaotic stick figures -- one to ten of them, each with its own
+temperament and its own mouth -- who live ON TOP of your real Windows desktop
+and treat your actual icons and open windows as their personal playground.
 
 They read the real thing:
   * your desktop icons   — the shell's SysListView32 control
@@ -139,7 +140,7 @@ DEFAULTS = {
     "scale": 0.68,            # 0.68 ~= the height of a desktop icon
     "fps": 40,
     "chaos": 1.0,             # how fast they escalate
-    "rival": True,            # spawn a second stick figure to fight
+    "crowd": 2,               # how many of them, 1 to 10
     "move_icons": False,      # let them physically drag your desktop icons (opt-in)
     "react_to_windows": True, # comment on real window titles, follow focus
     "sleep_when_idle": True,
@@ -166,9 +167,10 @@ def load_settings():
         s["fps"] = int(min(max(int(s["fps"]), 15), 60))
         s["chaos"] = min(max(float(s["chaos"]), 0.2), 3.0)
         s["idle_minutes"] = min(max(float(s["idle_minutes"]), 0.5), 120.0)
+        s["crowd"] = int(min(max(int(s["crowd"]), 1), len(ROSTER)))
     except Exception:
         return dict(DEFAULTS)
-    for k in ("rival", "move_icons", "react_to_windows", "sleep_when_idle",
+    for k in ("move_icons", "react_to_windows", "sleep_when_idle",
               "all_monitors", "start_with_windows"):
         s[k] = bool(s[k])
     return s
@@ -195,15 +197,22 @@ CFG = load_settings()
 # process. The only names stored are desktop icon labels, which
 # gremlin_icon_backup.json already holds. Settings has a "Forget everything"
 # button, and deleting the file does the same job.
+# The cast, in the order they join. Declared up here rather than with the
+# rest of the character data because the memory model below is keyed by it.
+ROSTER = ("brawler", "sniper", "coward", "showoff", "grump",
+          "magpie", "zealot", "tinkerer", "drama", "veteran")
+
 MEMORY_PATH = os.path.join(HERE, "gremlin_memory.json")
 MEM_KEYS = ("thrown", "grabbed", "wins", "losses", "icons_moved", "streak")
 MEM_DIRTY = False
 
 
 def blank_memory():
-    return {"version": 1, "runs": 0, "icons": {},
-            "gremlin": dict.fromkeys(MEM_KEYS, 0),
-            "rival": dict.fromkeys(MEM_KEYS, 0)}
+    # Counters live under "who" rather than as top-level names beside version /
+    # runs / icons, so the set of characters can be enumerated without an
+    # exclusion list.
+    return {"version": 2, "runs": 0, "icons": {},
+            "who": dict((n, dict.fromkeys(MEM_KEYS, 0)) for n in ROSTER)}
 
 
 def load_memory():
@@ -218,14 +227,16 @@ def load_memory():
         return m
     if isinstance(got.get("runs"), int):
         m["runs"] = min(max(got["runs"], 0), 10 ** 6)
-    for kind in ("gremlin", "rival"):
-        was = got.get(kind)
-        if not isinstance(was, dict):
-            continue
-        for k in MEM_KEYS:
-            v = was.get(k)
-            if isinstance(v, int) and not isinstance(v, bool):
-                m[kind][k] = min(max(v, -999), 10 ** 6)
+    who = got.get("who")
+    if isinstance(who, dict):
+        for kind in ROSTER:
+            was = who.get(kind)
+            if not isinstance(was, dict):
+                continue
+            for k in MEM_KEYS:
+                v = was.get(k)
+                if isinstance(v, int) and not isinstance(v, bool):
+                    m["who"][kind][k] = min(max(v, -999), 10 ** 6)
     icons = got.get("icons")
     if isinstance(icons, dict):
         for name, n in list(icons.items())[:40]:
@@ -240,7 +251,7 @@ MEM = load_memory()
 def bump(kind, key, n=1):
     """Nudge a counter. The write itself is throttled by the frame loop."""
     global MEM_DIRTY
-    MEM[kind][key] = MEM[kind].get(key, 0) + n
+    MEM["who"][kind][key] = MEM["who"][kind].get(key, 0) + n
     MEM_DIRTY = True
 
 
@@ -291,7 +302,7 @@ GREET_EVENTS = ("hello", "remember_runs", "remember_throws", "remember_fights")
 
 def greeting_event(kind):
     """Only bring up a number that is actually worth bringing up."""
-    m = MEM[kind]
+    m = MEM["who"][kind]
     if MEM["runs"] <= 1:
         return "hello"
     if m["thrown"] >= 5:
@@ -356,6 +367,16 @@ class Watcher:
         self.said[ev] = now
         self.quiet_until = now + 120
         return ev
+
+    def unsay(self, ev):
+        """Hand a remark back because nobody was free to say it.
+
+        pick() marks it said and goes quiet for two minutes the moment it hands
+        one over, so a remark that never reached a speaker used to buy two
+        minutes of silence for nothing. With a crowd all mid-swing at once that
+        is most of them."""
+        self.said.pop(ev, None)
+        self.quiet_until = 0.0
 
 
 def set_run_at_startup(on):
@@ -1015,7 +1036,7 @@ class SettingsWindow:
 
         header("Behaviour")
         slider("chaos", "Chaos level", 0.2, 3.0, 0.1)
-        check("rival", "Spawn a rival for him to fight")
+        slider("crowd", "How many of them", 1, 10, 1)
         check("react_to_windows", "React to my windows and follow focus")
         check("sleep_when_idle", "Sleep when I'm away")
         slider("idle_minutes", "Minutes before sleeping", 0.5, 60, 0.5)
@@ -1159,14 +1180,8 @@ def ik(ax, ay, bx, by, l1, l2, bend):
 #  palette
 # ==========================================================================
 KEY = "#010101"           # this exact color is invisible AND click-through
-MOODCOL = {
-    "bored": "#9FB0D8", "hyped": "#FFD35C", "furious": "#FF5B47",
-    "smug": "#63E0A8", "sulking": "#7C8BD6", "asleep": "#6C7BB0",
-}
-RIVALCOL = {
-    "bored": "#D8A0C8", "hyped": "#FF9BE0", "furious": "#FF4D8D",
-    "smug": "#C77DFF", "sulking": "#9A7BC4", "asleep": "#8A6FA8",
-}
+# Mood colours are per character now and derived from each one's base colour:
+# see MOODS, BASECOL and PALETTES with the rest of the cast further down.
 INK = "#0B0F22"
 ROPE = "#E9D9A9"
 LASER = "#7FE7FF"
@@ -1301,148 +1316,474 @@ REACH = {"sword": 40, "bow": 480, "blaster": 420, "bomb": 230,
          "rocket": 520, "minigun": 380, "chainsaw": 34, "lightning": 560}
 MELEE = ("sword", "chainsaw")
 
-# Everything either of them can say, per character, so they stop being the
-# same gremlin in two colours. The yellow one is loud, theatrical and takes
-# everything personally; the pink one is deadpan and files a report about it.
-# {name} is filled in with whatever icon he has just made off with.
-VOICES = {
-    "gremlin": {
-        "bored":    ["...", "ugh", "*yawn*", "I have seen everything",
-                     "nothing. a void."],
-        "hyped":    ["LET'S GO", "WOO", "YES YES YES", "OH IT'S ON", "MAGNIFICENT"],
-        "furious":  ["#@$%!", "RAAAGH", "YOU ABSOLUTE TURNIP", "I'LL END YOU",
-                     "UNFORGIVABLE"],
-        "smug":     ["too easy", "heh", "nailed it", "as foretold", "textbook"],
-        "sulking":  ["whatever", "fine.", "rude", "no one gets me",
-                     "I'm the victim here"],
-        "asleep":   ["z z z", "...zzz", "mnf... later"],
-        "grabbed":  ["OI! HANDS", "put me DOWN", "I'll bite", "UNHAND ME",
-                     "this is a KIDNAPPING"],
-        "thrown":   ["AAAAAH", "I'm gonna be SICK", "YOU GREAT MELON",
-                     "I'll REMEMBER this", "wheee- no. NO."],
-        "ko":       ["...", "urk", "worth it", "tell them I was brave", "avenge me"],
-        "victory":  ["GET UP", "who's next", "and STAY down", "easy",
-                     "next contestant"],
-        "hurt":     ["OW", "#@$%", "cheap shot", "that's IT", "RUDE"],
-        "fight":    ["COME HERE", "you're MINE", "hold still, weasel", "round two",
-                     "EN GARDE"],
-        "cursor":   ["oh, YOU again", "come here", "I've seen what you type",
-                     "hold still", "you and me. now."],
-        "hook":     ["whee", "yoink", "GERONIMOOO", "out of the way", "wheeeee"],
-        "snatch":   ["mine now", "bye, {name}", "{name} lives here now",
-                     "relocating", "finders keepers"],
-        "boredom":  ["I'm BORED", "nothing to DO?!", "right, that's IT",
-                     "ENTERTAIN ME"],
-        "rage":     ["that icon LOOKED at me", "who moved my stuff", "RAAAGH",
-                     "I've HAD it with this desktop"],
-        "getup":    ["ROUND TWO", "lucky hit", "doesn't count", "best of three",
-                     "that was a warm-up"],
-        "wake":     ["...what", "I'm up I'm up", "who's there", "WHAT. WHAT."],
-        "summoned": ["coming", "WHAT", "this better be good", "yes? YES?"],
-        "generic":  ["mine now", "what's this then", "hm", "I'll allow it",
-                     "suspicious", "bin it"],
-        # continuity: {runs} {throws} {wins} {losses} are always supplied
-        "hello":            ["right. who's in charge here", "new desktop. MINE.",
-                             "let's see what you've got"],
-        "remember_runs":    ["day {runs} of this", "run {runs}. still here.",
-                             "back again. {runs} times now."],
-        "remember_throws":  ["you've thrown me {throws} times",
-                             "{throws} throws. I'm counting.",
-                             "{throws}. that's the number. {throws}."],
-        "remember_fights":  ["{wins} and {losses}. I'm rounding up.",
-                             "{wins} wins. verified.",
-                             "the record says {wins}-{losses}"],
-        "fav_icon":         ["you AGAIN", "we meet again, {name}", "my old enemy",
-                             "{name}. every time."],
-        "revenge":          ["not this time", "I've been practising",
-                             "THIS one's mine", "no. NO."],
-        "gangup":           ["get it get it get it", "both of us. now.", "TEAM UP"],
-        "ctx_thrash":       ["pick ONE", "make your MIND up",
-                             "that's nine windows in a minute"],
-        "ctx_focused":      ["still on this?", "you've not moved in ages",
-                             "blink. please blink."],
-        "ctx_marathon":     ["go OUTSIDE", "you've been here for hours",
-                             "stand up. STAND UP."],
-        "ctx_late":         ["it's the middle of the night", "go to BED",
-                             "nothing good happens at this hour"],
-        "ctx_unsaved":      ["SAVE IT", "you've not saved", "ctrl-s. CTRL-S."],
-    },
-    "rival": {
-        "bored":    ["...", "riveting", "*sigh*", "is this it",
-                     "I could be anywhere else"],
-        "hyped":    ["oh, finally", "now we're talking", "good. GOOD.", "about time"],
-        "furious":  ["you have erred", "I'm going to enjoy this", "absolutely not",
-                     "oh, you're for it now", "escalating"],
-        "smug":     ["predictable", "as expected", "obviously",
-                     "was that meant to hurt", "do keep up"],
-        "sulking":  ["fine.", "noted.", "I'm not upset", "hm.", "typical"],
-        "asleep":   ["z z z", "...zzz", "shh"],
-        "grabbed":  ["do you mind", "put me down. now.", "this is assault",
-                     "unbelievable", "I'm documenting this"],
-        "thrown":   ["UNBELIEVABLE", "thrilling.", "you utter child",
-                     "noted, in detail", "marvellous"],
-        "ko":       ["...", "fine. you win.", "this is fine", "hm.", "lucky"],
-        "victory":  ["predictable", "was that it?", "you were saying?", "do get up",
-                     "disappointing"],
-        "hurt":     ["rude", "ow. genuinely.", "you'll regret that", "charming",
-                     "escalating"],
-        "fight":    ["let's get this over with", "come on then", "finally", "do try",
-                     "I've been looking forward to this"],
-        "cursor":   ["ah. the hand.", "there you are", "still clicking, are we",
-                     "we need to talk", "I've read your search history"],
-        "hook":     ["excuse me", "coming through", "mind yourself", "up we go"],
-        "snatch":   ["I'll take this", "{name} was in my way", "{name}'s mine",
-                     "consider it confiscated"],
-        "boredom":  ["I am so bored", "entertain me. now.", "this is beneath me",
-                     "something. anything."],
-        "rage":     ["who touched my things", "that's quite enough",
-                     "someone is for it", "unacceptable"],
-        "getup":    ["that doesn't count", "I slipped", "again. properly this time.",
-                     "I was being polite"],
-        "wake":     ["...what", "I'm awake", "who's there", "do you mind"],
-        "summoned": ["what.", "this had better matter", "yes?", "I'm busy"],
-        "generic":  ["mine, I think", "what IS that", "hm", "questionable",
-                     "delete it", "who made this"],
-        "hello":            ["so this is it.", "hm. we'll see.",
-                             "let's have a look at you"],
-        "remember_runs":    ["run {runs}.", "attempt {runs}.",
-                             "{runs} sessions. still no improvement."],
-        "remember_throws":  ["throw count: {throws}. noted.",
-                             "{throws} throws. all recorded.",
-                             "we're at {throws}. I'll wait."],
-        "remember_fights":  ["{wins} to {losses}. do the maths.",
-                             "record: {wins}-{losses}.",
-                             "{losses} losses. I've moved on."],
-        "fav_icon":         ["{name}. of course.", "you and I have history",
-                             "not {name} again", "we're back to {name}"],
-        "revenge":          ["no.", "not again", "I've adjusted",
-                             "we're doing this properly"],
-        "gangup":           ["together, then", "on three", "you take that side"],
-        "ctx_thrash":       ["decide.", "pick a window.",
-                             "this is exhausting to watch"],
-        "ctx_focused":      ["you've been staring at that a while", "still?",
-                             "it hasn't changed, you know"],
-        "ctx_marathon":     ["hours. it's been hours.", "you should stand up",
-                             "this isn't healthy"],
-        "ctx_late":         ["it's late.", "look at the time",
-                             "nothing you write now will be good"],
-        "ctx_unsaved":      ["unsaved.", "you haven't saved.",
-                             "one crash and that's gone"],
-    },
+MOODS = ("bored", "hyped", "furious", "smug", "sulking", "asleep")
+
+# One base colour each, well apart around the wheel and all bright enough to
+# read against a dark wallpaper.
+BASECOL = {
+    "brawler": "#FFC24A", "sniper": "#6FD8FF", "coward": "#A8E86A",
+    "showoff": "#FF8AD8", "grump": "#C79A6B", "magpie": "#B79BFF",
+    "zealot": "#FF6B4A", "tinkerer": "#57D9B0", "drama": "#FF5C8A",
+    "veteran": "#9FB2CE",
 }
 
-# Temperament, and it shows in play rather than only in the speech bubbles:
-# the yellow one closes and swings, the pink one keeps his distance and shoots.
+# Sixty hand-picked hex values would be sixty chances to get one wrong, so the
+# six moods are derived: pull the base towards a mood tint, then brighten or
+# dim. Mood stays readable across the cast, character stays readable across the
+# moods.
+MOOD_SHIFT = {
+    "bored":   ((150, 165, 200), .45, 1.00),
+    "hyped":   ((255, 252, 210), .32, 1.12),
+    "furious": ((255,  70,  55), .50, 1.00),
+    "smug":    (( 90, 230, 165), .42, 1.00),
+    "sulking": ((110, 120, 190), .50, 0.86),
+    "asleep":  ((105, 120, 175), .55, 0.72),
+}
+
+
+def palette(base):
+    """The six mood colours for one character, from its base colour."""
+    r, g, b = (int(base[1:3], 16), int(base[3:5], 16), int(base[5:7], 16))
+    out = {}
+    for mood, (tint, amt, bright) in MOOD_SHIFT.items():
+        c = [r + (tint[0] - r) * amt,
+             g + (tint[1] - g) * amt,
+             b + (tint[2] - b) * amt]
+        out[mood] = "#%02X%02X%02X" % tuple(
+            min(255, max(0, int(round(v * bright)))) for v in c)
+    return out
+
+
+PALETTES = dict((n, palette(c)) for n, c in BASECOL.items())
+
+# Temperament. Every axis is wired to arithmetic that already existed except
+# nerve, which is the health he breaks off a fight at -- that one is what makes
+# the coward read as a coward.
 TRAITS = {
-    "gremlin": {"aggro": 1.30, "chatty": 1.25, "grudge": 1.30,
-                "weapons": ("chainsaw", "sword", "rocket", "bomb", "minigun")},
-    "rival":   {"aggro": 0.75, "chatty": 0.70, "grudge": 0.80,
-                "weapons": ("blaster", "lightning", "bow", "minigun", "sword")},
+    "brawler":  {"aggro": 1.60, "chatty": 1.15, "grudge": 1.35, "dash": 1.20,
+                 "hops": 1.10, "thief": .25, "nerve": .05,
+                 "weapons": ("chainsaw", "sword", "rocket", "bomb", "minigun")},
+    "sniper":   {"aggro": 0.70, "chatty": 0.60, "grudge": 0.75, "dash": 0.85,
+                 "hops": 0.60, "thief": .30, "nerve": .35,
+                 "weapons": ("blaster", "lightning", "bow", "minigun", "rocket")},
+    "coward":   {"aggro": 0.35, "chatty": 1.40, "grudge": 0.60, "dash": 1.30,
+                 "hops": 1.40, "thief": .55, "nerve": .70,
+                 "weapons": ("bow", "blaster", "bomb", "minigun", "sword")},
+    "showoff":  {"aggro": 1.20, "chatty": 1.60, "grudge": 0.90, "dash": 1.05,
+                 "hops": 1.35, "thief": .40, "nerve": .20,
+                 "weapons": ("rocket", "lightning", "minigun", "sword", "blaster")},
+    "grump":    {"aggro": 0.85, "chatty": 0.45, "grudge": 1.30, "dash": 0.70,
+                 "hops": 0.45, "thief": .35, "nerve": .15,
+                 "weapons": ("sword", "chainsaw", "bomb", "rocket", "blaster")},
+    "magpie":   {"aggro": 0.30, "chatty": 1.10, "grudge": 0.55, "dash": 1.25,
+                 "hops": 1.30, "thief": .95, "nerve": .50,
+                 "weapons": ("bomb", "blaster", "bow", "sword", "minigun")},
+    "zealot":   {"aggro": 1.75, "chatty": 1.25, "grudge": 1.60, "dash": 1.15,
+                 "hops": 0.90, "thief": .20, "nerve": .00,
+                 "weapons": ("chainsaw", "rocket", "lightning", "sword", "bomb")},
+    "tinkerer": {"aggro": 0.80, "chatty": 0.75, "grudge": 0.85, "dash": 0.80,
+                 "hops": 0.70, "thief": .60, "nerve": .30,
+                 "weapons": ("bomb", "rocket", "minigun", "blaster", "bow")},
+    "drama":    {"aggro": 0.95, "chatty": 1.75, "grudge": 1.45, "dash": 1.00,
+                 "hops": 1.20, "thief": .45, "nerve": .55,
+                 "weapons": ("lightning", "sword", "bow", "blaster", "bomb")},
+    "veteran":  {"aggro": 1.05, "chatty": 0.35, "grudge": 0.70, "dash": 0.95,
+                 "hops": 0.75, "thief": .30, "nerve": .25,
+                 "weapons": ("sword", "blaster", "bow", "minigun", "chainsaw")},
 }
 
+# Every line any of them can say. {name} is an icon he has just made off with;
+# {runs} {throws} {wins} {losses} are his own counters, always all supplied.
+VOICES = {
+    "brawler": {
+        "bored":    ["...", "nothing to hit", "hm", "quiet. too quiet."],
+        "hyped":    ["LET'S GO", "YES", "NOW we're talking", "GET IN"],
+        "furious":  ["#@$%!", "RAAAGH", "YOU ABSOLUTE TURNIP", "I'LL END YOU"],
+        "smug":     ["too easy", "nailed it", "heh", "obviously"],
+        "sulking":  ["whatever", "fine.", "rude", "I'm not sulking"],
+        "asleep":   ["z z z", "...zzz", "mnf"],
+        "grabbed":  ["OI! HANDS", "put me DOWN", "I'll bite", "GET OFF"],
+        "thrown":   ["AAAAAH", "YOU GREAT MELON", "I'll REMEMBER this"],
+        "ko":       ["...", "urk", "worth it", "tell them I swung first"],
+        "victory":  ["GET UP", "who's next", "and STAY down", "next contestant"],
+        "hurt":     ["OW", "#@$%", "cheap shot", "that's IT"],
+        "fight":    ["COME HERE", "you're MINE", "hold still", "ROUND TWO"],
+        "cursor":   ["oh, YOU again", "come here", "hold still", "you and me"],
+        "hook":     ["whee", "yoink", "GERONIMOOO", "out of the way"],
+        "snatch":   ["mine now", "bye, {name}", "{name} lives here now"],
+        "boredom":  ["I'm BORED", "nothing to DO?!", "SOMEONE FIGHT ME"],
+        "rage":     ["that icon LOOKED at me", "who moved my stuff", "RAAAGH"],
+        "getup":    ["ROUND TWO", "lucky hit", "doesn't count", "warm-up"],
+        "wake":     ["...what", "I'm up", "WHAT. WHAT.", "who's there"],
+        "summoned": ["coming", "WHAT", "this better be good"],
+        "generic":  ["mine now", "what's this then", "I'll allow it", "bin it"],
+        "hello":    ["right. who's in charge here", "new desktop. MINE.",
+                     "let's see what you've got"],
+        "remember_runs":   ["day {runs} of this", "run {runs}. still here.",
+                            "back again. {runs} times now."],
+        "remember_throws": ["you've thrown me {throws} times",
+                            "{throws} throws. I'm counting."],
+        "remember_fights": ["{wins} and {losses}. I'm rounding up.",
+                            "{wins} wins. verified."],
+        "fav_icon": ["you AGAIN", "we meet again, {name}", "{name}. every time."],
+        "revenge":  ["not this time", "I've been practising", "THIS one's mine"],
+        "gangup":   ["get it get it get it", "both of us. now.", "TEAM UP"],
+        "ctx_thrash":   ["pick ONE", "make your MIND up", "nine windows a minute"],
+        "ctx_focused":  ["still on this?", "blink. please blink.", "you've not moved"],
+        "ctx_marathon": ["go OUTSIDE", "stand up. STAND UP.", "hours of this"],
+        "ctx_late":     ["it's the middle of the night", "go to BED"],
+        "ctx_unsaved":  ["SAVE IT", "ctrl-s. CTRL-S.", "you've not saved"],
+    },
+    "sniper": {
+        "bored":    ["...", "no targets", "holding", "nothing in range"],
+        "hyped":    ["target rich", "in range", "acquired", "finally, a shot"],
+        "furious":  ["recalculating", "you moved", "that was my shot",
+                     "I do not miss twice"],
+        "smug":     ["centre mass", "as computed", "one shot", "textbook"],
+        "sulking":  ["noted.", "fine.", "hm.", "wind, probably"],
+        "asleep":   ["z z z", "...zzz", "eyes closed, not asleep"],
+        "grabbed":  ["you have my arm", "release me", "this is not permitted",
+                     "hands off the optics"],
+        "thrown":   ["trajectory noted", "unhelpful", "I was aiming"],
+        "ko":       ["...", "out of ammunition", "hm.", "range was wrong"],
+        "victory":  ["confirmed", "one shot", "next target", "clean"],
+        "hurt":     ["hit", "flesh wound", "recording that", "logged"],
+        "fight":    ["ranging", "do not move", "acquiring", "in three. two."],
+        "cursor":   ["I see you", "you are very large", "hold there",
+                     "you blink a lot"],
+        "hook":     ["repositioning", "higher ground", "moving"],
+        "snatch":   ["{name} is cover now", "{name}: relocated", "requisitioned"],
+        "boredom":  ["no targets. none.", "give me something", "this is a waste"],
+        "rage":     ["someone moved my sightline", "unacceptable", "who fired"],
+        "getup":    ["range was wrong", "adjusting", "again, correctly"],
+        "wake":     ["eyes open", "...contact?", "I was resting my eyes"],
+        "summoned": ["in position", "what.", "I was set up"],
+        "generic":  ["low value", "not worth a round", "hm", "poor cover"],
+        "hello":    ["surveying.", "let me get set up.", "good sightlines here"],
+        "remember_runs":   ["run {runs}. same ground.", "{runs} deployments.",
+                            "day {runs}. wind unchanged."],
+        "remember_throws": ["thrown {throws} times. logged.",
+                            "{throws}. I keep records."],
+        "remember_fights": ["{wins} for {losses}. acceptable.",
+                            "record: {wins}-{losses}."],
+        "fav_icon": ["{name}. ranged and known.", "{name}, re-ranged", "zeroed on {name}"],
+        "revenge":  ["adjusting", "once more, zeroed", "range corrected", "this time"],
+        "gangup":   ["covering you", "I have the angle", "go, I'll shoot"],
+        "ctx_thrash":   ["hold one", "pick a window", "you are jittering"],
+        "ctx_focused":  ["you have not blinked", "same window, forty minutes",
+                         "no movement"],
+        "ctx_marathon": ["hours in this position", "get off that chair", "circulation"],
+        "ctx_late":     ["it is 3am", "poor light", "nothing good at this hour"],
+        "ctx_unsaved":  ["unsaved. exposed.", "one crash", "save. that is an order."],
+    },
+    "coward": {
+        "bored":    ["...", "is it over?", "quiet is good", "quiet is nice"],
+        "hyped":    ["oh! oh good", "is that for me?", "yes? YES?"],
+        "furious":  ["I'm WARNING you", "don't make me", "I'll do it, I will"],
+        "smug":     ["I survived", "still here", "see? see?"],
+        "sulking":  ["nobody likes me", "fine.", "I'll be over here"],
+        "asleep":   ["z z z", "...zzz", "shh, hiding"],
+        "grabbed":  ["sorry sorry sorry", "please put me down", "I'll pay you",
+                     "AAA don't"],
+        "thrown":   ["AAAAAAA", "I didn't do it", "sorry! sorry!"],
+        "ko":       ["...", "worth it, no it wasn't", "told you", "eep"],
+        "victory":  ["did I do that?", "sorry!", "I didn't mean to", "no hard feelings?"],
+        "hurt":     ["OW OW", "why me", "I wasn't even", "not the face"],
+        "fight":    ["do we have to?", "let's talk about this", "I'm coming, I guess",
+                     "no no no no"],
+        "cursor":   ["the hand. THE HAND.", "not me", "pick someone else"],
+        "hook":     ["away away away", "up here is safer", "not down there"],
+        "snatch":   ["borrowing {name}", "{name} is my shield now", "just for a bit"],
+        "boredom":  ["is anyone there?", "I'm lonely", "someone say something"],
+        "rage":     ["that's it, I've had it", "no more", "I'm quite cross"],
+        "getup":    ["I'm fine. fine.", "that didn't hurt", "walked into that"],
+        "wake":     ["WHO'S THERE", "I'm awake I'm awake", "eep"],
+        "summoned": ["me? really?", "coming, sorry", "am I in trouble"],
+        "generic":  ["is that safe?", "I wouldn't touch it", "hm", "careful"],
+        "hello":    ["hello? anyone?", "is this safe?", "I'll stay out of the way"],
+        "remember_runs":   ["day {runs}. still alive.", "{runs} times now.",
+                            "run {runs}. no incidents."],
+        "remember_throws": ["{throws} times you've thrown me. I forgive you.", "{throws}. I count them.",
+                            "{throws} throws and I never complain"],
+        "remember_fights": ["{wins} wins. {losses} is fine too.",
+                            "{losses} losses. it's not a competition."],
+        "fav_icon": ["not {name} again", "{name} scares me", "we have history, {name}"],
+        "revenge":  ["right. RIGHT.", "I've had enough", "no more running"],
+        "gangup":   ["I'll help! from here", "you first", "right behind you"],
+        "ctx_thrash":   ["are you alright?", "so many windows", "that's a lot"],
+        "ctx_focused":  ["you've gone very still", "are you breathing", "blink?"],
+        "ctx_marathon": ["you should rest", "it's been hours", "please stand up"],
+        "ctx_late":     ["it's so late", "you should sleep", "everyone's asleep"],
+        "ctx_unsaved":  ["save it! please", "unsaved. UNSAVED.", "oh no, save"],
+    },
+    "showoff": {
+        "bored":    ["no audience", "...", "wasted on this crowd", "is anyone watching"],
+        "hyped":    ["TA-DAA", "watch THIS", "and he's OFF", "showtime"],
+        "furious":  ["how DARE you", "in front of everyone?", "UNACCEPTABLE"],
+        "smug":     ["and the crowd goes wild", "flawless", "did you see that",
+                     "no autographs"],
+        "sulking":  ["nobody appreciates me", "fine.", "my talent is wasted"],
+        "asleep":   ["z z z", "...zzz", "resting the instrument"],
+        "grabbed":  ["not the FACE", "careful, I'm delicate", "unhand the talent"],
+        "thrown":   ["STILL LOOKING GOOD", "wheeeee", "that was DELIBERATE"],
+        "ko":       ["...", "curtain", "what a way to go", "remember me"],
+        "victory":  ["THANK YOU, THANK YOU", "was that good for you", "encore?"],
+        "hurt":     ["MY FACE", "not the profile", "OW, artistically"],
+        "fight":    ["watch closely", "front row seats", "you'll want to see this"],
+        "cursor":   ["an audience!", "watch this bit", "hello, gorgeous"],
+        "hook":     ["and NOW the aerial", "ta-daa", "wheeeee"],
+        "snatch":   ["and {name} DISAPPEARS", "for my next trick, {name}",
+                     "nothing up my sleeves"],
+        "boredom":  ["I need an AUDIENCE", "somebody watch me", "this is a tragedy"],
+        "rage":     ["I was UPSTAGED", "who touched my things", "how DARE"],
+        "getup":    ["and he RISES", "part two", "you thought that was it?"],
+        "wake":     ["is it showtime", "I'm up, I'm up", "who woke the talent"],
+        "summoned": ["you called?", "of course you did", "I'm needed"],
+        "generic":  ["needs work", "no flair", "hm", "I could do better"],
+        "hello":    ["and here he IS", "hello, desktop", "let's put on a show"],
+        "remember_runs":   ["night {runs} of the tour", "{runs} shows now",
+                            "run {runs}. still packing them in."],
+        "remember_throws": ["{throws} throws. that's my record.",
+                            "thrown {throws} times, landed all of them"],
+        "remember_fights": ["{wins} and {losses}, and I look good either way",
+                            "{wins} wins, all of them stylish"],
+        "fav_icon": ["{name}, my old co-star", "{name} again! the crowd loves it"],
+        "revenge":  ["the REMATCH", "act two", "this time with feeling"],
+        "gangup":   ["a DUET", "together now", "on three, darling"],
+        "ctx_thrash":   ["pick a scene", "so much scenery", "decide, decide"],
+        "ctx_focused":  ["still watching that?", "same window, no applause"],
+        "ctx_marathon": ["hours. no interval.", "even I need a break"],
+        "ctx_late":     ["the late show", "it's past midnight, darling"],
+        "ctx_unsaved":  ["SAVE, you fool", "unsaved! the drama!", "save it, darling"],
+    },
+    "grump": {
+        "bored":    ["...", "*sigh*", "typical", "wonderful."],
+        "hyped":    ["about time", "suppose that'll do", "fine. good."],
+        "furious":  ["right. RIGHT.", "I've had it", "that's the last straw"],
+        "smug":     ["told you", "as I said", "hm.", "knew it"],
+        "sulking":  ["leave me alone", "fine.", "nobody listens", "typical"],
+        "asleep":   ["z z z", "...zzz", "at last, quiet"],
+        "grabbed":  ["put me down", "oh for-", "every time", "I'm too old for this"],
+        "thrown":   ["typical", "my BACK", "wonderful. lovely."],
+        "ko":       ["...", "finally, a rest", "hm.", "that'll do"],
+        "victory":  ["there.", "done.", "can I sit down now", "sorted"],
+        "hurt":     ["ow. right.", "was that necessary", "hm."],
+        "fight":    ["let's get on with it", "fine.", "come on then", "quickly"],
+        "cursor":   ["oh, it's you", "what now", "I was busy"],
+        "hook":     ["up we go, I suppose", "hm", "this had better work"],
+        "snatch":   ["taking {name}", "{name}'s in my way", "moving this"],
+        "boredom":  ["is that it?", "nothing. as usual.", "hm."],
+        "rage":     ["who moved that", "right, that's it", "I've had enough"],
+        "getup":    ["not finished", "once more, then", "hm. again."],
+        "wake":     ["what", "I was asleep", "this had better be good"],
+        "summoned": ["what now", "I'm coming", "give me a minute"],
+        "generic":  ["rubbish", "hm", "no thank you", "what's the point of that"],
+        "hello":    ["hm. this again.", "right then.", "let's get it over with"],
+        "remember_runs":   ["run {runs}. joy.", "{runs} times. no better.",
+                            "day {runs}. wonderful."],
+        "remember_throws": ["{throws} throws. my back knows.",
+                            "thrown {throws} times. typical."],
+        "remember_fights": ["{wins}-{losses}. about right.",
+                            "{losses} losses. I remember each one."],
+        "fav_icon": ["{name}. of course.", "{name}. wonderful.", "always {name}, isn't it"],
+        "revenge":  ["no.", "oh no you don't", "right, properly this time"],
+        "gangup":   ["fine, together", "you take that side", "hm. alright."],
+        "ctx_thrash":   ["decide.", "stop that", "pick one"],
+        "ctx_focused":  ["still?", "it hasn't changed", "not budged, have you"],
+        "ctx_marathon": ["hours. hours.", "get up", "this isn't healthy"],
+        "ctx_late":     ["it's late", "go to bed", "look at the time"],
+        "ctx_unsaved":  ["just save it", "unsaved.", "you'll lose that"],
+    },
+    "magpie": {
+        "bored":    ["...", "ooh?", "nothing shiny", "hm. dull."],
+        "hyped":    ["OOH", "shiny shiny", "MINE", "look at it!"],
+        "furious":  ["MINE", "give it BACK", "that's not yours"],
+        "smug":     ["mine now", "collected", "one more", "into the pile"],
+        "sulking":  ["you took it back", "fine.", "I only borrowed it"],
+        "asleep":   ["z z z", "...zzz", "counting them"],
+        "grabbed":  ["I didn't take anything", "check my pockets, nothing",
+                     "down! I'll drop it!", "I found it like that"],
+        "thrown":   ["I'M HOLDING SOMETHING", "careful, it's fragile", "AAA"],
+        "ko":       ["...", "keep the icons", "don't touch my pile", "shiny..."],
+        "victory":  ["mine", "and yours is mine", "collected", "and your stuff too"],
+        "hurt":     ["ay! careful!", "not the goods", "rude", "watch the merchandise"],
+        "fight":    ["what have you GOT", "give it here", "hand it over"],
+        "cursor":   ["ooh, a big one", "can I have it", "what's that"],
+        "hook":     ["ooh, up there", "shiny up here", "wheee"],
+        "snatch":   ["ooh, {name}", "{name} is MINE", "into the pile with {name}",
+                     "mine mine mine"],
+        "boredom":  ["nothing left to take", "MORE", "give me something shiny"],
+        "rage":     ["someone's been in my pile", "who touched it", "MINE"],
+        "getup":    ["still got it", "check the pile", "up. where's my pile."],
+        "wake":     ["is it still there", "...mine?", "is my pile safe"],
+        "summoned": ["is there something for me", "coming!", "what've you got"],
+        "generic":  ["ooh", "mine", "I'll take that", "what IS that", "shiny"],
+        "hello":    ["ooh, a whole desktop", "so much STUFF", "mine, all of it"],
+        "remember_runs":   ["visit {runs}", "{runs} raids now", "day {runs}. still collecting."],
+        "remember_throws": ["{throws} throws and I kept hold every time",
+                            "thrown {throws} times. never dropped it."],
+        "remember_fights": ["{wins} wins, {losses} donations",
+                            "{wins}-{losses}. I count everything."],
+        "fav_icon": ["{name}! my favourite", "{name} again, lovely", "mine, {name}"],
+        "revenge":  ["give it BACK", "that was mine", "you're not keeping it"],
+        "gangup":   ["you distract it", "half each", "we split it"],
+        "ctx_thrash":   ["ooh, and that one, and that one", "so many!", "pick one for me"],
+        "ctx_focused":  ["that one? just that one?", "boring one", "still that?"],
+        "ctx_marathon": ["hours on ONE thing", "get up, find me things"],
+        "ctx_late":     ["late shift", "nobody's watching now", "good time for it"],
+        "ctx_unsaved":  ["save it before you lose it", "unsaved, careful", "mind that"],
+    },
+    "zealot": {
+        "bored":    ["...", "the hour approaches", "patience", "soon"],
+        "hyped":    ["IT BEGINS", "AT LAST", "THE HOUR IS COME", "THE TIME IS NOW"],
+        "furious":  ["HERESY", "YOU WILL ANSWER", "IT IS WRITTEN", "UNCLEAN"],
+        "smug":     ["as foretold", "it was written", "inevitable", "so it is"],
+        "sulking":  ["I am misunderstood", "none of you see", "so be it"],
+        "asleep":   ["z z z", "...zzz", "the vigil ends"],
+        "grabbed":  ["RELEASE ME", "you dare", "unhand the faithful", "SACRILEGE"],
+        "thrown":   ["I AM UNBROKEN", "this too was written", "I ASCEND"],
+        "ko":       ["...", "it was foretold", "I go gladly", "not the end"],
+        "victory":  ["IT IS DONE", "so pass the unworthy", "as promised", "RISE, IF YOU CAN"],
+        "hurt":     ["PAIN IS NOTHING", "I feel nothing", "is that all"],
+        "fight":    ["JUDGEMENT", "come, then", "your hour", "I HAVE COME"],
+        "cursor":   ["the great hand", "I know you", "you steer everything"],
+        "hook":     ["I ASCEND", "upward", "carry me"],
+        "snatch":   ["{name} is claimed", "{name} shall be moved", "so it is written"],
+        "boredom":  ["GIVE ME PURPOSE", "there is nothing to smite", "I hunger"],
+        "rage":     ["DEFILEMENT", "who has done this", "IT IS WRITTEN"],
+        "getup":    ["I RETURN", "you cannot end me", "AGAIN", "it is not finished"],
+        "wake":     ["THE HOUR", "I wake", "who calls"],
+        "summoned": ["I ANSWER", "you called", "at last, purpose"],
+        "generic":  ["unclean", "it must go", "hm", "this offends me"],
+        "hello":    ["A NEW WORLD", "I have come", "this place needs order"],
+        "remember_runs":   ["the {runs}th coming", "run {runs}. the work continues.",
+                            "{runs} vigils"],
+        "remember_throws": ["{throws} times cast down. {throws} times risen.",
+                            "thrown {throws} times. still here."],
+        "remember_fights": ["{wins} judgements delivered", "{wins}-{losses}. the work continues."],
+        "fav_icon": ["{name}. AGAIN.", "my old adversary, {name}", "{name} still stands"],
+        "revenge":  ["NOT AGAIN", "this time it ends", "I have prepared"],
+        "gangup":   ["JOIN ME", "together, brother", "as one"],
+        "ctx_thrash":   ["CHOOSE", "indecision is weakness", "pick, mortal"],
+        "ctx_focused":  ["such devotion", "you have not moved", "admirable. worrying."],
+        "ctx_marathon": ["HOURS of this", "rest is not weakness", "stand"],
+        "ctx_late":     ["the small hours", "nothing good is written now", "rest, mortal"],
+        "ctx_unsaved":  ["PRESERVE IT", "unsaved. folly.", "preserve the work"],
+    },
+    "tinkerer": {
+        "bored":    ["...", "recalibrating", "hm", "idle cycle"],
+        "hyped":    ["it works!", "excellent", "as designed", "ha!"],
+        "furious":  ["you broke it", "that was CALIBRATED", "unacceptable variance"],
+        "smug":     ["as designed", "within tolerance", "as calculated", "within model"],
+        "sulking":  ["nobody reads the manual", "fine.", "hm."],
+        "asleep":   ["z z z", "...zzz", "powered down"],
+        "grabbed":  ["mind the mechanism", "you'll break something", "put me down carefully",
+                     "I am not a handle"],
+        "thrown":   ["ballistic. unplanned.", "recording the arc", "unstable!"],
+        "ko":       ["...", "systems down", "back to the workshop", "hm."],
+        "victory":  ["as designed", "test successful", "noted for the log", "next prototype"],
+        "hurt":     ["structural damage", "ow. noted.", "that'll bruise"],
+        "fight":    ["field test", "hold still, this is calibrated", "stand there. exactly there."],
+        "cursor":   ["the operator", "you are imprecise", "steady hands, please"],
+        "hook":     ["deploying line", "tension good", "up we go"],
+        "snatch":   ["{name} is a component now", "salvaging {name}", "{name}: reassigned"],
+        "boredom":  ["nothing to build", "give me parts", "idle. wasteful."],
+        "rage":     ["someone moved my things", "my WORKBENCH", "who reorganised this"],
+        "getup":    ["design flaw. corrected.", "iteration two", "again, properly"],
+        "wake":     ["powering up", "...status?", "who is in my workshop"],
+        "summoned": ["on my way", "what needs fixing", "bring it here"],
+        "generic":  ["poorly made", "hm", "I could improve that", "shoddy"],
+        "hello":    ["let me see the schematics", "a new workspace", "what have we here"],
+        "remember_runs":   ["build {runs}", "iteration {runs}", "run {runs}. logged."],
+        "remember_throws": ["thrown {throws} times. all logged.",
+                            "{throws} data points on being thrown."],
+        "remember_fights": ["{wins}-{losses}. within tolerance.",
+                            "{wins} successes, {losses} failures. useful."],
+        "fav_icon": ["{name}. structurally interesting.", "{name}, same tolerances", "back to {name}"],
+        "revenge":  ["recalibrated", "corrected", "the flaw is fixed"],
+        "gangup":   ["combined load", "you push, I'll time it", "coordinated"],
+        "ctx_thrash":   ["settle on one", "context switching is expensive", "focus"],
+        "ctx_focused":  ["deep in it", "same window an hour", "no state change"],
+        "ctx_marathon": ["hours at the bench", "diminishing returns", "rest"],
+        "ctx_late":     ["late-night work is undone in the morning", "it's 3am"],
+        "ctx_unsaved":  ["unsaved. bad practice.", "save. now.", "commit that"],
+    },
+    "drama": {
+        "bored":    ["...", "I am WASTING away", "such tedium", "nothing. NOTHING."],
+        "hyped":    ["AT LONG LAST", "MY MOMENT", "I LIVE", "oh, JOY"],
+        "furious":  ["BETRAYAL", "how COULD you", "I am UNDONE", "TREACHERY"],
+        "smug":     ["naturally", "was there ever doubt", "I was magnificent"],
+        "sulking":  ["nobody understands me", "I shall never recover", "leave me to my grief"],
+        "asleep":   ["z z z", "...zzz", "even my dreams are tragic"],
+        "grabbed":  ["UNHAND ME", "I am ABDUCTED", "the indignity", "HELP, someone"],
+        "thrown":   ["I AM FLUNG", "my finest hour", "AAAAAA", "cruel, cruel world"],
+        "ko":       ["...", "tell my story", "I regret NOTHING", "remember me kindly"],
+        "victory":  ["and SO it ends", "witness it", "let this be recorded", "I weep for you"],
+        "hurt":     ["I AM SLAIN", "the PAIN", "how could you", "MY SIDE"],
+        "fight":    ["at LAST, a nemesis", "our moment comes", "prepare yourself"],
+        "cursor":   ["the great hand returns", "you again, tormentor", "witness me"],
+        "hook":     ["I FLY", "into the heavens", "I SOAR"],
+        "snatch":   ["{name} comes with ME", "farewell, {name}'s home", "I take {name}"],
+        "boredom":  ["I am DYING of boredom", "give me DRAMA", "somebody DO something"],
+        "rage":     ["MY THINGS", "who has DONE this", "an OUTRAGE"],
+        "getup":    ["I RISE", "the second act", "you thought that was the end?"],
+        "wake":     ["I LIVE", "what fresh horror", "who dares wake me"],
+        "summoned": ["I ANSWER THE CALL", "you need me", "of course you do"],
+        "generic":  ["hideous", "who made this", "an offence", "hm"],
+        "hello":    ["and so it begins", "a new stage", "I have ARRIVED"],
+        "remember_runs":   ["act {runs}", "the {runs}th tragedy", "run {runs}, and still I suffer"],
+        "remember_throws": ["{throws} TIMES you have thrown me",
+                            "{throws}. I have counted every one."],
+        "remember_fights": ["{wins} triumphs, {losses} tragedies",
+                            "{wins}-{losses}. history will be kind."],
+        "fav_icon": ["{name}! my NEMESIS", "{name}, we are fated", "{name}. always {name}."],
+        "revenge":  ["THIS TIME", "the reckoning", "I have waited for this"],
+        "gangup":   ["TOGETHER", "our alliance!", "side by side"],
+        "ctx_thrash":   ["SO MANY WINDOWS", "the CHAOS", "choose, I beg you"],
+        "ctx_focused":  ["such STILLNESS", "have you turned to stone", "blink, please"],
+        "ctx_marathon": ["HOURS", "you will perish at that desk", "stand, I implore you"],
+        "ctx_late":     ["the witching hour", "midnight, and still you toil"],
+        "ctx_unsaved":  ["UNSAVED", "one crash and all is LOST", "save, save!"],
+    },
+    "veteran": {
+        "bored":    ["...", "hm", "seen it", "quiet"],
+        "hyped":    ["good", "right", "hm. good.", "now then"],
+        "furious":  ["no", "don't", "that's enough", "last warning"],
+        "smug":     ["hm", "thought so", "same as always", "predictable"],
+        "sulking":  ["hm.", "fine", "...", "no matter"],
+        "asleep":   ["z z z", "...zzz", "resting"],
+        "grabbed":  ["down", "no", "let go", "hm."],
+        "thrown":   ["hm", "landed worse", "again?"],
+        "ko":       ["...", "hm", "that's that", "fair"],
+        "victory":  ["done", "up you get", "next", "hm"],
+        "hurt":     ["hm", "had worse", "noted", "fine"],
+        "fight":    ["right", "come on", "let's go", "hm"],
+        "cursor":   ["you", "hm", "you again", "still there"],
+        "hook":     ["up", "hm", "hold on"],
+        "snatch":   ["{name}", "having {name}", "{name}, then"],
+        "boredom":  ["nothing", "hm.", "quiet again"],
+        "rage":     ["who did that", "no", "enough"],
+        "getup":    ["again", "hm", "not done", "up"],
+        "wake":     ["hm", "awake", "who's that"],
+        "summoned": ["moving", "hm", "right"],
+        "generic":  ["hm", "seen it", "no", "fine"],
+        "hello":    ["hm. this place.", "right then", "seen worse"],
+        "remember_runs":   ["run {runs}", "{runs}. hm.", "day {runs}"],
+        "remember_throws": ["{throws} throws", "thrown {throws} times. hm."],
+        "remember_fights": ["{wins}-{losses}", "{wins} wins. hm."],
+        "fav_icon": ["{name}", "{name} again", "hm. {name}."],
+        "revenge":  ["no", "not again", "properly this time"],
+        "gangup":   ["with you", "go on", "I've got this side"],
+        "ctx_thrash":   ["settle", "one at a time", "hm"],
+        "ctx_focused":  ["still on that", "hm", "long time"],
+        "ctx_marathon": ["long shift", "stand up", "hm. hours."],
+        "ctx_late":     ["late", "sleep", "it's gone midnight"],
+        "ctx_unsaved":  ["save it", "unsaved", "hm. save."],
+    },
+}
 
 class Fighter:
-    def __init__(self, x, y, kind="gremlin"):
+    def __init__(self, x, y, kind=ROSTER[0]):
         self.become(kind)
         self.x, self.y = x, y
         self.vx = self.vy = 0.0
@@ -1499,7 +1840,7 @@ class Fighter:
     def become(self, kind):
         """Colour, voice and temperament all follow from which one he is."""
         self.kind = kind
-        self.pal = MOODCOL if kind == "gremlin" else RIVALCOL
+        self.pal = PALETTES[kind]
         self.per = TRAITS[kind]
 
     def line(self, event, **fmt):
@@ -1520,7 +1861,10 @@ class Fighter:
         if self.mood == m:
             return
         self.mood, self.mood_t = m, 0.0
-        if not quiet:
+        # The quiet ones keep it to themselves. Without this, chatty only gated
+        # remarks about your windows, so a fivefold spread in the trait produced
+        # barely a doubling in how much they actually said.
+        if not quiet and random.random() < min(1.0, .55 * self.per["chatty"]):
             self.yell(m, 1.6)
 
     def color(self):
@@ -1643,20 +1987,45 @@ class App:
 
     # -- lifecycle ---------------------------------------------------------
     def spawn_fighters(self):
-        g = self.fighters[0] if self.fighters else None
-        self.fighters = [g or Fighter(self.ox + self.W * .4, self.ground_at(self.ox + self.W * .4))]
-        self.fighters[0].become("gremlin")
-        if CFG["rival"]:
-            r = Fighter(self.ox + self.W * .65, self.ground_at(self.ox + self.W * .65), "rival")
-            self.fighters.append(r)
-        for f in self.fighters:
+        """Build the cast up or down to whatever the setting asks for.
+
+        Survivors are kept rather than rebuilt. This runs every time the slider
+        moves, and the old version threw away everyone but the first, losing
+        their health, mood, position and any icon they were holding."""
+        want = int(clamp(CFG["crowd"], 1, len(ROSTER)))
+        keep = self.fighters[:want]
+        for f in self.fighters[want:]:
+            self.drop_icon(f)          # never leave one holding a real icon
+        for i in range(len(keep), want):
+            x = self.ox + self.W * (i + 1.0) / (want + 1.0)
+            keep.append(Fighter(x, self.ground_at(x), ROSTER[i]))
+        self.fighters = keep
+        for i, f in enumerate(self.fighters):
+            f.become(ROSTER[i])
             f.sc = CFG["scale"]
-        if len(self.fighters) == 2:
-            self.fighters[0].foe = self.fighters[1]
-            self.fighters[1].foe = self.fighters[0]
-        else:
-            self.fighters[0].foe = None
+            f.foe = None               # free-for-all; picked fresh in decide()
         self._build_layers()
+        self._prune_layers()
+
+    def _prune_layers(self):
+        """Throw away pooled canvas items belonging to fighters who have gone.
+
+        The pool is keyed by layer tag and nothing else ever removes from it, so
+        without this, dropping ten to one leaves nine fighters' worth of items
+        in it for the rest of the session -- hidden, but still walked and still
+        raised every frame."""
+        live = set(self._layers)
+        for tag in [t for t in self._pool if t not in live]:
+            for items in self._pool[tag].values():
+                for it in items:
+                    try:
+                        self.canvas.delete(it)
+                    except Exception:
+                        pass
+                    self._opt.pop(it, None)
+            self._pool.pop(tag, None)
+            self._used.pop(tag, None)
+            self._prev.pop(tag, None)
 
     def _build_layers(self):
         """The draw order, as tags. _frame_end() raises them in this sequence,
@@ -1684,7 +2053,7 @@ class App:
     def apply_settings(self):
         for f in self.fighters:
             f.sc = CFG["scale"]
-        want = 2 if CFG["rival"] else 1
+        want = int(clamp(CFG["crowd"], 1, len(ROSTER)))
         if len(self.fighters) != want:
             self.spawn_fighters()
 
@@ -1705,8 +2074,12 @@ class App:
         self.paused = not self.paused
 
     def summon(self):
-        for f in self.fighters:
-            f.wander_to = clamp(self.mouse["x"], self.ox + 40, self.ox + self.W - 40)
+        n = len(self.fighters)
+        for i, f in enumerate(self.fighters):
+            # fan them out, or ten of them arrive stacked on one pixel
+            spread = (i - (n - 1) / 2.0) * 70
+            f.wander_to = clamp(self.mouse["x"] + spread,
+                                self.ox + 40, self.ox + self.W - 40)
             f.target = None
             f.set_state("walk")
             f.goal = self.time + 6
@@ -1744,6 +2117,18 @@ class App:
             if mon[0] <= x < mon[2] and (y is None or mon[1] <= y < mon[3]):
                 return work[3]
         return self.mons[0][1][3]
+
+    def nearest_enemy(self, f):
+        """Closest one still on his feet. Free-for-all: no fixed pairings, so
+        this is re-asked every time he decides what to do."""
+        best, bd = None, 1e9
+        for o in self.fighters:
+            if o is f or o.hp <= 0 or o.state in ("ko", "grabbed"):
+                continue
+            d = abs(o.x - f.x) + abs(o.y - f.y) * .5
+            if d < bd:
+                best, bd = o, d
+        return best
 
     # -- mouse -------------------------------------------------------------
     def near_fighter(self, sx, sy):
@@ -2068,7 +2453,11 @@ class App:
             self.zap_hit(f, tx, ty)
 
     def aim_point(self, f):
-        if f.state == "fight" or (f.foe and f.foe.hp > 0 and f.mode == "fight"):
+        # The foe test has to come first. It used to read `f.state == "fight" or
+        # (f.foe and ...)`, which short-circuits before the None check and
+        # dereferences a missing foe -- unreachable with a fixed pair, live the
+        # moment foes are reassigned.
+        if f.foe and f.foe.hp > 0 and (f.state == "fight" or f.mode == "fight"):
             return f.foe.x, f.foe.y - 34 * f.foe.sc
         if f.target:
             return f.target["cx"], f.target["cy"]
@@ -2108,8 +2497,10 @@ class App:
             # a running score, so a losing streak can mean something later
             bump(att.kind, "wins")
             bump(vic.kind, "losses")
-            MEM[att.kind]["streak"] = max(1, MEM[att.kind]["streak"] + 1)
-            MEM[vic.kind]["streak"] = min(-1, MEM[vic.kind]["streak"] - 1)
+            MEM["who"][att.kind]["streak"] = max(
+                1, MEM["who"][att.kind]["streak"] + 1)
+            MEM["who"][vic.kind]["streak"] = min(
+                -1, MEM["who"][vic.kind]["streak"] - 1)
             vic.yell("ko", 1.6)
             att.anger = .2
             att.set_mood("smug")
@@ -2146,6 +2537,7 @@ class App:
         f.goal = self.time + random.uniform(1.4, 3.6) / CFG["chaos"]
         if f.stun > 0:
             return
+        f.foe = self.nearest_enemy(f)
         alive = self.terrain.targets()
         rage = f.anger > .55 or f.mood == "furious"
         bored = f.boredom > .6
@@ -2154,7 +2546,7 @@ class App:
         # pick a fight with the other one
         if f.foe and f.foe.hp > 0 and f.foe.state not in ("ko", "grabbed"):
             # losing repeatedly makes him keener, and he brings it up
-            losing = MEM[f.kind]["streak"] <= -2
+            losing = MEM["who"][f.kind]["streak"] <= -2
             p = (.30 if rage else .16) * f.per["aggro"] * (1.6 if losing else 1.0)
             if r < p:
                 f.mode = "fight"
@@ -2163,9 +2555,14 @@ class App:
                 f.set_state("fight")
                 f.yell("revenge" if losing else "fight", 1.4)
                 return
-            # two of them on one icon beats two of them on two icons
-            if f.foe.target and f.foe.state == "hunt" and r < p + .10:
-                f.target = f.foe.target
+            # piling onto someone else's icon beats everyone picking his own
+            mate = None
+            for o in self.fighters:
+                if o is not f and o.state == "hunt" and o.target:
+                    mate = o
+                    break
+            if mate and r < p + .10:
+                f.target = mate.target
                 f.hits = 0
                 f.plan = plan_weapon(f.per, rage)
                 f.set_state("hunt")
@@ -2206,7 +2603,7 @@ class App:
             f.hits = 0
             f.plan = plan_weapon(f.per, rage)
             f.snatch = (t["kind"] == "icon" and self.can_move_icons()
-                        and random.random() < .58)
+                        and random.random() < f.per["thief"])
             if f.snatch:
                 f.plan = "sword"
             chat = f.per["chatty"]
@@ -2329,7 +2726,8 @@ class App:
                     f.skid = 1.0
                     self.puff(f.x, f.y, 3, DUST, K, 8)
                 f.face = nf
-                f.vx = approach(f.vx, f.face * 150 * K, 1400 * K * dt)
+                f.vx = approach(f.vx, f.face * 150 * K * f.per["dash"],
+                                1400 * K * dt)
         elif s == "carry":
             self.carry_tick(f, dt)
             d = f.wander_to - f.x
@@ -2340,8 +2738,9 @@ class App:
                 f.set_state("idle")
                 f.goal = self.time + .8
             else:
-                f.vx = approach(f.vx, f.face * 175 * K, 1500 * K * dt)
-                if f.on_ground and random.random() < dt * .8:
+                f.vx = approach(f.vx, f.face * 175 * K * f.per["dash"],
+                                1500 * K * dt)
+                if f.on_ground and random.random() < dt * .8 * f.per["hops"]:
                     f.vy = -700 * K
         elif s == "fight":
             foe = f.foe
@@ -2352,13 +2751,24 @@ class App:
             elif f.st > 12:
                 f.mode = "roam"
                 f.set_state("idle")
+            elif f.hp <= f.per["nerve"] * 100:
+                # he has had enough. The coward's nerve is high so he leaves
+                # early; the zealot's is zero so he never does.
+                f.mode = "roam"
+                f.target = None
+                f.wander_to = clamp(f.x - (foe.x - f.x), self.ox + 60,
+                                    self.ox + self.W - 60)
+                f.set_state("walk")
+                f.yell("hurt", 1.2)
             else:
                 d = foe.x - f.x
                 f.face = 1 if d >= 0 else -1
                 reach = REACH[f.plan] * (.4 + .6 * K)
                 if abs(d) > reach - 14:
-                    f.vx = approach(f.vx, f.face * 290 * K, 1700 * K * dt)
-                    if f.on_ground and (foe.y < f.y - 60 or random.random() < dt * .55):
+                    f.vx = approach(f.vx, f.face * 290 * K * f.per["dash"],
+                                    1700 * K * dt)
+                    if f.on_ground and (foe.y < f.y - 60 or
+                                        random.random() < dt * .55 * f.per["hops"]):
                         f.vy = -880 * K
                         f.set_state("jump")
                         f.mode = "fight"
@@ -2384,9 +2794,9 @@ class App:
                         and random.random() < dt * 2.6:
                     self.fire_hook(f, t["cx"], t["top"] - 26)
                 elif abs(d) > reach - 20:
-                    spd = (300 if f.mood == "furious" else 205) * K
+                    spd = (300 if f.mood == "furious" else 205) * K * f.per["dash"]
                     f.vx = approach(f.vx, f.face * spd, 1600 * K * dt)
-                    if f.on_ground and (random.random() < dt * .7 or
+                    if f.on_ground and (random.random() < dt * .7 * f.per["hops"] or
                                         (t["top"] < f.y - 70 and random.random() < dt * 3)):
                         f.vy = -880 * K
                         f.set_state("jump")
@@ -2488,7 +2898,8 @@ class App:
                 f.set_state("idle")
                 f.goal = self.time + .3
             elif abs(d) > 130:
-                f.vx = approach(f.vx, f.face * 250 * K, 1600 * K * dt)
+                f.vx = approach(f.vx, f.face * 250 * K * f.per["dash"],
+                                1600 * K * dt)
                 if f.on_ground and self.mouse["y"] < f.y - 120 * f.sc and \
                         random.random() < dt * 2.2:
                     f.vy = -880 * K
@@ -2625,7 +3036,7 @@ class App:
         if not self.greeted and self.time > 5 and not self.asleep:
             self.greeted = True
             f = random.choice(self.fighters)
-            m = MEM[f.kind]
+            m = MEM["who"][f.kind]
             f.yell(greeting_event(f.kind), 2.6, runs=MEM["runs"],
                    throws=m["thrown"], wins=m["wins"], losses=m["losses"])
 
@@ -2673,12 +3084,17 @@ class App:
             ev = self.watch.pick(self.time, fg[0] if fg else "",
                                  self.time - self.awake_since)
             if ev:
+                # "fight" is circling between swings, which is fine to talk
+                # through. Without it, a crowd all brawling at once means the
+                # remark never finds a speaker and the feature goes silent.
                 free = [f for f in self.fighters
-                        if f.state in ("idle", "walk", "taunt", "hunt")]
+                        if f.state in ("idle", "walk", "taunt", "hunt", "fight")]
                 if free:
                     f = random.choice(free)
                     f.said = self.time
                     f.yell(ev, 2.6)
+                else:
+                    self.watch.unsay(ev)   # try again once someone is free
 
         for f in self.fighters:
             self.update_fighter(f, dt)

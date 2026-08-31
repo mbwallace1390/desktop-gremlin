@@ -51,6 +51,15 @@ fixes lived, and so reported no change after a correct fix.
 
 ## Things that bite
 
+**A test that drives the settings window writes a real settings file.**
+`SettingsWindow.apply()` calls `save_settings(CFG)` and `set_run_at_startup()`,
+so exercising it from a check drops a `gremlin_settings.json` into the repo
+carrying whatever that check had forced — and the app then starts with those
+values. This happened twice in one session, the second time after being caught
+by the first. Point `SETTINGS_PATH` at `tests/.tmp` before calling `apply()`, or
+do not call it. The same applies to `MEMORY_PATH` and `LOG_PATH`, which every
+check already redirects.
+
 **Two coordinate systems.** `item_rect` returns screen pixels, `item_pos` and
 `SETITEMPOSITION32` want listview coordinates. They differ by a constant for
 the whole view, so one probe read gets the offset and everything else is a

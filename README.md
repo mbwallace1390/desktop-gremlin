@@ -70,6 +70,11 @@ With it on, one of them beats up an icon, hoists it over their head, carries it
 across the desktop and drops it somewhere else — and your icon is genuinely
 there now. Not an animation of an icon. The icon.
 
+Explosions move them too. A bomb or a rocket landing in a cluster shoves every
+icon in the blast outward, hardest for whatever was closest; a stray bullet
+knocks a single icon aside. All of it is clamped to the visible desktop, and all
+of it is undone by **Restore my icon layout**.
+
 **The undo:** your layout is written to `gremlin_icon_backup.json` the first
 time you ever run this. **Tray → Restore my icon layout** puts every icon back.
 
@@ -117,6 +122,38 @@ furious about it. A health bar appears over whoever's hurt.
 
 Set `crowd` to anything from 1 to 10.
 
+## They remember you
+
+Between runs, in `gremlin_memory.json`. Each character keeps its own count of
+how often you've grabbed it, how often you've thrown it, its win-loss record
+against the others, and how many icons it has made off with. A few seconds
+after launch one of them will bring it up — *"you've thrown me 41 times"*,
+*"{wins} and {losses}, I'm rounding up"* — and a losing streak makes that one
+come back keener, with a different line for it.
+
+They also develop a grudge against whichever icon they have picked on most, and
+greet it by name.
+
+**Counters, never a log.** Nothing about which applications or windows you use
+is written to disk. The only names stored are desktop icon labels, which
+`gremlin_icon_backup.json` already holds. **Settings → Make them forget
+everything about me** wipes it, and so does deleting the file.
+
+## They notice what you're doing
+
+In memory only, never written down. Twelve window switches in a minute, fifteen
+minutes staring at one thing, three hours at the desk, the small hours, an
+unsaved-changes marker in a title bar:
+
+> *pick ONE* · *blink. please blink.* · *go to BED* · *SAVE IT*
+
+Each remark has its own five-to-thirty-minute cooldown on top of a global
+two-minute one, and nothing fires in the first 45 seconds. The difference
+between a desktop pet you keep and one you uninstall is how often it decides to
+be clever at you.
+
+Turn the lot off with **react_to_windows**.
+
 ## Moods
 
 **bored → hyped → furious → smug → sulking**, in colour, posture and face.
@@ -137,7 +174,24 @@ anywhere on screen and sometimes come pick a fight with it.
 
 Everywhere else the overlay is click-through, so it never intercepts your work.
 
+They can leave the screen, and come back on the other side of it. Walk off the
+right edge, reappear on the left. It happens when one gets knocked out of view,
+and it stops a fight drifting off the edge and carrying on where you cannot see
+it — anyone out of sight for more than a moment is brought back round.
+
 ---
+
+## Files it writes
+
+All of them sit next to the script, and every one is safe to delete.
+
+| File | What |
+|---|---|
+| `gremlin_settings.json` | your settings; delete for defaults |
+| `gremlin_icon_backup.json` | your icon layout as it was on first run — the undo |
+| `gremlin_memory.json` | what they remember about you |
+| `gremlin.ico` | the tray icon, rebuilt each launch |
+| `gremlin_log.txt` | only written when there is no console; see below |
 
 ## Settings
 
@@ -162,7 +216,16 @@ Everywhere else the overlay is click-through, so it never intercepts your work.
 
 - **Your files are never touched.** The only thing that physically changes is
   where a desktop icon *sits* — a position, nothing else. No renaming, no
-  moving between folders, no deleting. The explosions are animation.
+  moving between folders, no deleting. Explosions shove icons around the
+  desktop, but that is still only a position, and **Restore my icon layout**
+  puts every one of them back. All of it needs *Let them actually drag my
+  desktop icons*, which is off until you turn it on.
+- **What they remember is counters.** Grabs, throws, wins, losses, icons moved,
+  and the labels of the desktop icons they pick on — nothing about which
+  applications or windows you use, and nothing leaves your machine. Everything
+  they notice about your working habits lives in memory and dies with the
+  process. *Settings → Make them forget everything about me*, or delete
+  `gremlin_memory.json`.
 - **Reading icon positions** means asking Explorer's list control where its
   items are, which needs a read-only buffer inside the Explorer process
   (`VirtualAllocEx` + `ReadProcessMemory`). It's the standard technique — every
@@ -190,15 +253,31 @@ Physics is one-way platforms with a ledge-grab pass. Every motion constant is
 multiplied by a scale factor derived from body size, so a small gremlin moves
 like a small thing rather than a slowed-down big one.
 
-## Debug
+## If something goes wrong
+
+Launched from the `.bat` there is no console, so nothing can print an error at
+you. Anything that goes wrong is written to **`gremlin_log.txt`** next to the
+script instead, and the tray icon pops a balloon once to say so. That file is
+the first place to look, and the right thing to attach to an issue.
 
 ```
 run_gremlin.bat --debug
 ```
 
-Green lines are icon platforms, blue are window title bars, red is the floor.
-If they don't line up with your real icons, that's a DPI problem — open an
-issue with a screenshot.
+Debug keeps the console window and draws the collision geometry: green lines
+are icon platforms, blue are window title bars, red is the floor. If they don't
+line up with your real icons, that's a DPI problem — open an issue with a
+screenshot.
+
+## Checking a change
+
+```
+python tests\run_all.py
+```
+
+Twelve checks, a couple of seconds, nothing to install. They drive the real app
+with the Windows shell stubbed out, so they never touch your desktop. Every one
+of them encodes a bug that actually shipped.
 
 ---
 

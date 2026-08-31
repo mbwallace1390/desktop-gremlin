@@ -1,0 +1,20 @@
+# Generated at runtime — DO NOT COMMIT.
+# gremlin_icon_backup.json contains the name of every icon on your desktop.
+gremlin_icon_backup.json
+gremlin_settings.json
+gremlin.ico
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini

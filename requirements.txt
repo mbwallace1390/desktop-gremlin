@@ -1,0 +1,3 @@
+# Desktop Gremlin needs exactly one thing beyond the standard library.
+# tkinter ships with the official python.org Windows installer.
+pywin32>=305

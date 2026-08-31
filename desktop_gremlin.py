@@ -994,29 +994,39 @@ class Terrain:
 # ==========================================================================
 TITLE_LINES = [
     (("youtube", "netflix", "twitch", "hulu", "prime video"),
-     ["working hard I see", "shouldn't you be busy", "put subtitles on"]),
+     ["working hard I see", "shouldn't you be busy", "put subtitles on",
+      "this is what you do all day", "four hours. FOUR."]),
     (("chrome", "firefox", "edge", "opera", "brave"),
-     ["how many tabs", "close some tabs", "your RAM is crying"]),
+     ["how many tabs", "close some tabs", "your RAM is crying",
+      "forty tabs. FORTY.", "one of those is playing audio"]),
     (("visual studio", "vscode", "code", "pycharm", "sublime", "notepad++"),
-     ["that's a bug", "line 40 is wrong", "just ship it", "add a comment"]),
+     ["that's a bug", "line 40 is wrong", "just ship it", "add a comment",
+      "you'll regret that variable name", "it compiles. barely."]),
     (("explorer", "file", "this pc", "downloads"),
-     ["what a mess", "organize this", "so many files"]),
-    (("discord", "slack", "teams", "whatsapp"), ["ignore them", "reply later", "brb"]),
-    (("spotify", "music", "vlc", "media player"), ["turn it up", "skip this one", "banger"]),
-    (("steam", "epic games", "game"), ["let's play", "one more round", "you'll lose"]),
-    (("excel", "sheet", "word", "outlook", "pdf"), ["riveting", "*yawn*", "get a hobby"]),
-    (("task manager",), ["don't you dare", "I'm not the problem", "look away"]),
-    (("settings", "control panel"), ["breaking something?", "careful"]),
+     ["what a mess", "organize this", "so many files",
+      "this folder is a crime scene", "final_v3_FINAL_actual, is it"]),
+    (("discord", "slack", "teams", "whatsapp"),
+     ["ignore them", "reply later", "brb", "they can wait", "leave them on read"]),
+    (("spotify", "music", "vlc", "media player"),
+     ["turn it up", "skip this one", "banger", "absolute banger", "again? again."]),
+    (("steam", "epic games", "game"),
+     ["let's play", "one more round", "you'll lose", "you'll lose again",
+      "buy it, don't play it, classic"]),
+    (("excel", "sheet", "word", "outlook", "pdf"),
+     ["riveting", "*yawn*", "get a hobby", "thrilling stuff", "a spreadsheet. wow."]),
+    (("task manager",), ["don't you dare", "I'm not the problem", "look away",
+                         "nothing to see", "that's not for you"]),
+    (("settings", "control panel"), ["breaking something?", "careful",
+                                     "don't touch that", "you'll regret this"]),
 ]
 ICON_LINES = {
-    "recycle bin": ["garbage day", "into the bin", "I live here now"],
-    "this pc": ["all mine", "nice PC", "mine now"],
-    "network": ["is it plugged in", "no signal"],
+    "recycle bin": ["garbage day", "into the bin", "I live here now", "my house"],
+    "this pc": ["all mine", "nice PC", "mine now", "I'll be having that"],
+    "network": ["is it plugged in", "no signal", "have you tried turning it off"],
 }
-GENERIC = ["mine now", "what's this", "hm", "I'll allow it", "suspicious"]
 
 
-def line_for_title(title):
+def line_for_title(f, title):
     t = (title or "").lower()
     for keys, lines in TITLE_LINES:
         for k in keys:
@@ -1025,15 +1035,15 @@ def line_for_title(title):
     first = (title or "").split(" ")[0][:16]
     if first and random.random() < .5:
         return random.choice([f"{first}, huh", f"what is {first}", "seen worse"])
-    return random.choice(GENERIC)
+    return f.line("generic")
 
 
-def line_for_icon(name):
+def line_for_icon(f, name):
     n = (name or "").lower()
     for k, lines in ICON_LINES.items():
         if k in n:
             return random.choice(lines)
-    return random.choice(GENERIC)
+    return f.line("generic")
 
 
 # ==========================================================================
@@ -1046,22 +1056,99 @@ REACH = {"sword": 40, "bow": 480, "blaster": 420, "bomb": 230,
          "rocket": 520, "minigun": 380, "chainsaw": 34, "lightning": 560}
 MELEE = ("sword", "chainsaw")
 
-LINES = {
-    "bored": ["...", "ugh", "*yawn*", "so bored"],
-    "hyped": ["LET'S GO", "WOO", "YES", "AGAIN"],
-    "furious": ["#@$%!", "RAAAGH", "YOU DID WHAT", "I'LL END YOU"],
-    "smug": ["too easy", "heh", "nailed it", "as expected"],
-    "sulking": ["whatever", "fine.", "rude", "no one gets me"],
-    "asleep": ["z z z", "...zzz"],
+# Everything either of them can say, per character, so they stop being the
+# same gremlin in two colours. The yellow one is loud, theatrical and takes
+# everything personally; the pink one is deadpan and files a report about it.
+# {name} is filled in with whatever icon he has just made off with.
+VOICES = {
+    "gremlin": {
+        "bored":    ["...", "ugh", "*yawn*", "I have seen everything",
+                     "nothing. a void."],
+        "hyped":    ["LET'S GO", "WOO", "YES YES YES", "OH IT'S ON", "MAGNIFICENT"],
+        "furious":  ["#@$%!", "RAAAGH", "YOU ABSOLUTE TURNIP", "I'LL END YOU",
+                     "UNFORGIVABLE"],
+        "smug":     ["too easy", "heh", "nailed it", "as foretold", "textbook"],
+        "sulking":  ["whatever", "fine.", "rude", "no one gets me",
+                     "I'm the victim here"],
+        "asleep":   ["z z z", "...zzz", "mnf... later"],
+        "grabbed":  ["OI! HANDS", "put me DOWN", "I'll bite", "UNHAND ME",
+                     "this is a KIDNAPPING"],
+        "thrown":   ["AAAAAH", "I'm gonna be SICK", "YOU GREAT MELON",
+                     "I'll REMEMBER this", "wheee- no. NO."],
+        "ko":       ["...", "urk", "worth it", "tell them I was brave", "avenge me"],
+        "victory":  ["GET UP", "who's next", "and STAY down", "easy",
+                     "next contestant"],
+        "hurt":     ["OW", "#@$%", "cheap shot", "that's IT", "RUDE"],
+        "fight":    ["COME HERE", "you're MINE", "hold still, weasel", "round two",
+                     "EN GARDE"],
+        "cursor":   ["oh, YOU again", "come here", "I've seen what you type",
+                     "hold still", "you and me. now."],
+        "hook":     ["whee", "yoink", "GERONIMOOO", "out of the way", "wheeeee"],
+        "snatch":   ["mine now", "bye, {name}", "{name} lives here now",
+                     "relocating", "finders keepers"],
+        "boredom":  ["I'm BORED", "nothing to DO?!", "right, that's IT",
+                     "ENTERTAIN ME"],
+        "rage":     ["that icon LOOKED at me", "who moved my stuff", "RAAAGH",
+                     "I've HAD it with this desktop"],
+        "getup":    ["ROUND TWO", "lucky hit", "doesn't count", "best of three",
+                     "that was a warm-up"],
+        "wake":     ["...what", "I'm up I'm up", "who's there", "WHAT. WHAT."],
+        "summoned": ["coming", "WHAT", "this better be good", "yes? YES?"],
+        "generic":  ["mine now", "what's this then", "hm", "I'll allow it",
+                     "suspicious", "bin it"],
+    },
+    "rival": {
+        "bored":    ["...", "riveting", "*sigh*", "is this it",
+                     "I could be anywhere else"],
+        "hyped":    ["oh, finally", "now we're talking", "good. GOOD.", "about time"],
+        "furious":  ["you have erred", "I'm going to enjoy this", "absolutely not",
+                     "oh, you're for it now", "escalating"],
+        "smug":     ["predictable", "as expected", "obviously",
+                     "was that meant to hurt", "do keep up"],
+        "sulking":  ["fine.", "noted.", "I'm not upset", "hm.", "typical"],
+        "asleep":   ["z z z", "...zzz", "shh"],
+        "grabbed":  ["do you mind", "put me down. now.", "this is assault",
+                     "unbelievable", "I'm documenting this"],
+        "thrown":   ["UNBELIEVABLE", "thrilling.", "you utter child",
+                     "noted, in detail", "marvellous"],
+        "ko":       ["...", "fine. you win.", "this is fine", "hm.", "lucky"],
+        "victory":  ["predictable", "was that it?", "you were saying?", "do get up",
+                     "disappointing"],
+        "hurt":     ["rude", "ow. genuinely.", "you'll regret that", "charming",
+                     "escalating"],
+        "fight":    ["let's get this over with", "come on then", "finally", "do try",
+                     "I've been looking forward to this"],
+        "cursor":   ["ah. the hand.", "there you are", "still clicking, are we",
+                     "we need to talk", "I've read your search history"],
+        "hook":     ["excuse me", "coming through", "mind yourself", "up we go"],
+        "snatch":   ["I'll take this", "{name} was in my way", "{name}'s mine",
+                     "consider it confiscated"],
+        "boredom":  ["I am so bored", "entertain me. now.", "this is beneath me",
+                     "something. anything."],
+        "rage":     ["who touched my things", "that's quite enough",
+                     "someone is for it", "unacceptable"],
+        "getup":    ["that doesn't count", "I slipped", "again. properly this time.",
+                     "I was being polite"],
+        "wake":     ["...what", "I'm awake", "who's there", "do you mind"],
+        "summoned": ["what.", "this had better matter", "yes?", "I'm busy"],
+        "generic":  ["mine, I think", "what IS that", "hm", "questionable",
+                     "delete it", "who made this"],
+    },
 }
-FIGHT_LINES = ["COME HERE", "you're MINE", "en garde", "hold still", "round two"]
-HURT_LINES = ["OW", "cheap shot", "that's it", "#@$%"]
+
+# Temperament, and it shows in play rather than only in the speech bubbles:
+# the yellow one closes and swings, the pink one keeps his distance and shoots.
+TRAITS = {
+    "gremlin": {"aggro": 1.30, "chatty": 1.25, "grudge": 1.30,
+                "weapons": ("chainsaw", "sword", "rocket", "bomb", "minigun")},
+    "rival":   {"aggro": 0.75, "chatty": 0.70, "grudge": 0.80,
+                "weapons": ("blaster", "lightning", "bow", "minigun", "sword")},
+}
 
 
 class Fighter:
     def __init__(self, x, y, kind="gremlin"):
-        self.kind = kind
-        self.pal = MOODCOL if kind == "gremlin" else RIVALCOL
+        self.become(kind)
         self.x, self.y = x, y
         self.vx = self.vy = 0.0
         self.face = 1
@@ -1111,8 +1198,22 @@ class Fighter:
         self.carry_dest_y = y
 
     # -- helpers ----------------------------------------------------------
+    def become(self, kind):
+        """Colour, voice and temperament all follow from which one he is."""
+        self.kind = kind
+        self.pal = MOODCOL if kind == "gremlin" else RIVALCOL
+        self.per = TRAITS[kind]
+
+    def line(self, event, **fmt):
+        txt = random.choice(VOICES[self.kind][event])
+        return txt.format(**fmt) if fmt else txt
+
     def say(self, txt, dur=1.5):
         self.emote, self.emote_t = txt, dur
+
+    def yell(self, event, dur=1.5, **fmt):
+        """Say something this particular one would say."""
+        self.say(self.line(event, **fmt), dur)
 
     def set_state(self, s):
         self.state, self.st = s, 0.0
@@ -1122,7 +1223,7 @@ class Fighter:
             return
         self.mood, self.mood_t = m, 0.0
         if not quiet:
-            self.say(random.choice(LINES[m]), 1.6)
+            self.yell(m, 1.6)
 
     def color(self):
         return self.pal.get(self.mood, "#F2F5FF")
@@ -1134,25 +1235,14 @@ class Fighter:
         return self.y - 66 * self.sc
 
 
-def plan_weapon(rage=False):
+def plan_weapon(per, rage=False):
+    """Each favours his own half of the arsenal, most of the time. In a rage he
+    reaches for his top three, which is what makes the brawler charge."""
     if rage:
-        return random.choice(["chainsaw", "sword", "rocket", "minigun", "bomb"])
-    r = random.random()
-    if r < .18:
-        return "sword"
-    if r < .32:
-        return "bomb"
-    if r < .46:
-        return "blaster"
-    if r < .56:
-        return "bow"
-    if r < .70:
-        return "rocket"
-    if r < .84:
-        return "minigun"
-    if r < .94:
-        return "lightning"
-    return "chainsaw"
+        return random.choice(per["weapons"][:3])
+    if random.random() < .72:
+        return random.choice(per["weapons"])
+    return random.choice(WEAPONS)
 
 # ==========================================================================
 #  THE APP
@@ -1246,8 +1336,7 @@ class App:
     def spawn_fighters(self):
         g = self.fighters[0] if self.fighters else None
         self.fighters = [g or Fighter(self.ox + self.W * .4, self.ground_at(self.ox + self.W * .4))]
-        self.fighters[0].kind = "gremlin"
-        self.fighters[0].pal = MOODCOL
+        self.fighters[0].become("gremlin")
         if CFG["rival"]:
             r = Fighter(self.ox + self.W * .65, self.ground_at(self.ox + self.W * .65), "rival")
             self.fighters.append(r)
@@ -1299,7 +1388,7 @@ class App:
             f.target = None
             f.set_state("walk")
             f.goal = self.time + 6
-            f.say(random.choice(["coming", "what", "yes?"]), 1.2)
+            f.yell("summoned", 1.2)
 
     def restore_icons(self):
         n = restore_layout()
@@ -1346,10 +1435,10 @@ class App:
         f.grabbed = True
         f.gx, f.gy = e.x + self.ox, e.y + self.oy + 58 * f.sc
         f.set_state("grabbed")
-        f.anger = clamp(f.anger + .28, 0, 1)
+        f.anger = clamp(f.anger + .28 * f.per["grudge"], 0, 1)
         f.boredom = 0
         self.drop_icon(f)
-        f.say(random.choice(["HEY", "put me DOWN", "let go!", "#@$%!"]), 1.5)
+        f.yell("grabbed", 1.5)
         if f.anger > .5:
             f.set_mood("furious")
 
@@ -1368,7 +1457,7 @@ class App:
             f.vy = clamp(self.mouse["vy"], -1300, 1300) * lk - 120 * f.K()
             f.vr = clamp(f.vx / (110 * f.K()), -13, 13)
             f.set_state("thrown")
-            f.say(random.choice(["AAAA", "whoa", "I'll REMEMBER this"]), 1.4)
+            f.yell("thrown", 1.4)
 
     def poll_cursor(self, dt):
         pt = wt.POINT()
@@ -1464,8 +1553,7 @@ class App:
         f.wander_to = clamp(f.x + random.uniform(-620, 620), self.ox + 90,
                             self.ox + self.W - 90)
         f.carry_dest_y = clamp(gy - random.uniform(60, 420), 40, gy - 60)
-        f.say(random.choice(["mine now", "this is mine", f"bye, {f.carry['name'][:12]}",
-                             "relocating"]), 1.6)
+        f.yell("snatch", 1.6, name=f.carry["name"][:12] or "that")
         return True
 
     def carry_tick(self, f, dt):
@@ -1512,7 +1600,7 @@ class App:
                   "dur": clamp(dist(f.x, f.y - 60, tx, ty) / 1500, .12, .5)}
         f.set_state("hookfire")
         f.face = 1 if tx > f.x else -1
-        f.say(random.choice(["whee", "incoming", "yoink"]), 1.0)
+        f.yell("hook", 1.0)
 
     def start_attack(self, f, at=None, foe=False):
         if at is not None:
@@ -1616,21 +1704,21 @@ class App:
         vic.vx = d * (250 + dmg * 9) * k
         vic.vy = -(180 + dmg * 5) * k
         vic.on_ground = False
-        vic.anger = clamp(vic.anger + .07, 0, 1)
+        vic.anger = clamp(vic.anger + .07 * vic.per["grudge"], 0, 1)
         self.spark(vic.x, vic.y - 34 * vic.sc, 12, "#FFFFFF", 300, k)
         self.shake(.16, 6 * k)
         if vic.hp <= 0:
             vic.hp = 0
             vic.set_state("ko")
             vic.vr = random.uniform(-9, 9)
-            vic.say(random.choice(["...", "urk", "worth it"]), 1.6)
+            vic.yell("ko", 1.6)
             att.anger = .2
             att.set_mood("smug")
-            att.say(random.choice(["GET UP", "too easy", "who's next"]), 1.8)
+            att.yell("victory", 1.8)
         else:
             vic.set_state("thrown")
             if random.random() < .6:
-                vic.say(random.choice(HURT_LINES), 1.1)
+                vic.yell("hurt", 1.1)
 
     def hit_target(self, f, t, fx, fy):
         self.spark(fx, fy, 10, "#CFD8F5", 260, f.K())
@@ -1664,12 +1752,12 @@ class App:
 
         # pick a fight with the other one
         if f.foe and f.foe.hp > 0 and f.foe.state not in ("ko", "grabbed"):
-            p = .30 if rage else .16
+            p = (.30 if rage else .16) * f.per["aggro"]
             if r < p:
                 f.mode = "fight"
-                f.plan = plan_weapon(rage)
+                f.plan = plan_weapon(f.per, rage)
                 f.set_state("fight")
-                f.say(random.choice(FIGHT_LINES), 1.4)
+                f.yell("fight", 1.4)
                 return
 
         if self.time - self.mouse["t"] < 4 and \
@@ -1678,14 +1766,14 @@ class App:
             f.target = None
             f.set_state("cursor")
             f.boredom = 0
-            f.say(random.choice(["oh, YOU again", "come here", "hold still"]), 1.4)
+            f.yell("cursor", 1.4)
             return
 
         if alive and r < .18:
             t = random.choice(alive)
             self.fire_hook(f, t["cx"], t["top"] - 26)
             f.target = t if random.random() < .7 else None
-            f.plan = plan_weapon(rage)
+            f.plan = plan_weapon(f.per, rage)
             return
 
         if alive and (rage or bored or r < .70):
@@ -1695,15 +1783,17 @@ class App:
                 t = random.choice(alive)
             f.target = t
             f.hits = 0
-            f.plan = plan_weapon(rage)
+            f.plan = plan_weapon(f.per, rage)
             f.snatch = (t["kind"] == "icon" and self.can_move_icons()
                         and random.random() < .58)
             if f.snatch:
                 f.plan = "sword"
-            if CFG["react_to_windows"] and self.time - f.said > 7 and random.random() < .5:
+            chat = f.per["chatty"]
+            if CFG["react_to_windows"] and self.time - f.said > 7 / chat \
+                    and random.random() < .5 * chat:
                 f.said = self.time
-                f.say(line_for_icon(t["name"]) if t["kind"] == "icon"
-                      else line_for_title(t["name"]), 1.8)
+                f.say(line_for_icon(f, t["name"]) if t["kind"] == "icon"
+                      else line_for_title(f, t["name"]), 1.8)
             far = abs(t["cx"] - f.x) > 460 or t["top"] < f.y - 190
             if far and f.on_ground and random.random() < .6:
                 self.fire_hook(f, t["cx"], t["top"] - 26)
@@ -1747,7 +1837,7 @@ class App:
         if not self.asleep and f.state == "sleep":
             f.set_state("idle")
             f.set_mood("bored", quiet=True)
-            f.say(random.choice(["...what", "I'm up", "who's there"]), 1.4)
+            f.yell("wake", 1.4)
 
         f.boredom = clamp(f.boredom + dt * .055 * CFG["chaos"], 0, 1)
         f.anger = clamp(f.anger - dt * .09, 0, 1)
@@ -1758,7 +1848,7 @@ class App:
             if f.boredom >= .995 and f.anger < .7:
                 f.anger, f.boredom = .9, .85
                 f.set_mood("furious")
-                f.say(random.choice(["I'm BORED", "that's IT", "nothing to do?!"]), 1.8)
+                f.yell("boredom", 1.8)
                 f.goal = 0
             f.mood_check -= dt
             if f.mood_check <= 0:
@@ -1777,8 +1867,7 @@ class App:
                     m = random.choice(["furious", "sulking", "hyped", "smug", "bored"])
                     if m == "furious":
                         f.anger = .72
-                        f.say(random.choice(["that icon LOOKED at me", "RAAAGH",
-                                             "who moved my stuff"]), 1.7)
+                        f.yell("rage", 1.7)
                     f.set_mood(m)
 
         s = f.state
@@ -1797,7 +1886,7 @@ class App:
                 f.goal = self.time + .6
                 f.set_mood("furious")
                 f.anger = .8
-                f.say(random.choice(["ROUND TWO", "lucky hit", "I wasn't ready"]), 1.7)
+                f.yell("getup", 1.7)
         elif s == "idle":
             f.vx = approach(f.vx, 0, 900 * K * dt)
             if self.time > f.goal:
@@ -1925,7 +2014,7 @@ class App:
                     f.set_state("fight")
                 elif f.target and random.random() < .72:
                     if random.random() < .4:
-                        f.plan = plan_weapon(f.mood == "furious")
+                        f.plan = plan_weapon(f.per, f.mood == "furious")
                     f.set_state("hunt")
                 else:
                     f.set_state("idle")
@@ -1986,7 +2075,7 @@ class App:
                 f.stun = .8
                 f.set_state("idle")
                 f.goal = self.time + 1.0
-                f.anger = clamp(f.anger + .3, 0, 1)
+                f.anger = clamp(f.anger + .3 * f.per["grudge"], 0, 1)
                 if f.hp > 0:
                     f.set_mood("furious" if random.random() < .62 else "sulking")
 
@@ -2117,13 +2206,13 @@ class App:
                     f = random.choice(awake)
                     if self.time - f.said > 5:
                         f.said = self.time
-                        f.say(line_for_title(fg[0]), 2.0)
+                        f.say(line_for_title(f, fg[0]), 2.0)
                     if random.random() < .45:
                         for t in self.terrain.targets():
                             if t["kind"] == "window" and t["key"] == fg[1]:
                                 f.target = t
                                 f.hits = 0
-                                f.plan = plan_weapon()
+                                f.plan = plan_weapon(f.per)
                                 f.set_state("hunt")
                                 break
 

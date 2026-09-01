@@ -125,7 +125,10 @@ It's a free-for-all: everyone goes for whoever is nearest. They chase, strike,
 knock each other flying, with a deliberate beat between strikes so a fight is
 something you can follow rather than a blur. Take enough hits and you're
 knocked out — X eyes, flat on your back — then up again a few seconds later,
-furious about it. A health bar appears over whoever's hurt.
+furious about it. A health bar appears over whoever's hurt. Tick `blood` in
+Settings if you want the cartoon red to match: sprays on hits, stains on the
+floor that fade on their own — or get mopped up by a water balloon. Only they
+bleed; your icons still just spark.
 
 Set `crowd` to anything from 1 to 10.
 
@@ -241,6 +244,7 @@ All of them sit next to the script, and every one is safe to delete.
 | `crowd` | `2` | how many of them, 1 to 10 |
 | `move_icons` | `false` | let them physically drag your icons |
 | `shots_over_icons` | `true` | stray fire passes over icons; aimed fire and blasts still land |
+| `blood` | `false` | cartoon blood: sprays on hits, stains the floor, fades; water balloons mop it |
 | `react_to_windows` | `true` | comment on window titles, follow focus |
 | `sleep_when_idle` | `true` | |
 | `idle_minutes` | `5.0` | |
@@ -286,7 +290,10 @@ IK for the arms and legs, posed per state, then squashed and mirrored. That's
 why they scale cleanly from icon-sized to huge, and why adding a weapon is a
 dozen lines rather than a spritesheet.
 
-Physics is one-way platforms with a ledge-grab pass. Every motion constant is
+Physics is one-way platforms with a ledge-grab pass — and anything climbable
+overhead gets scaled hand-over-hand and mantled, rather than bounced at; the
+leap is kept for the tall, the far, and the characters who were always going
+to bounce anyway. Every motion constant is
 multiplied by a scale factor derived from body size, so a small gremlin moves
 like a small thing rather than a slowed-down big one.
 

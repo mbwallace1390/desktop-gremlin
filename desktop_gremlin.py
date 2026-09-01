@@ -151,6 +151,7 @@ DEFAULTS = {
     "crowd": 2,               # how many of them, 1 to 10
     "move_icons": False,      # let them physically drag your desktop icons (opt-in)
     "shots_over_icons": True, # stray fire passes over icons instead of into them
+    "blood": False,           # cartoon blood and floor stains (opt-in)
     "react_to_windows": True, # comment on real window titles, follow focus
     "sleep_when_idle": True,
     "idle_minutes": 5.0,
@@ -179,7 +180,7 @@ def load_settings():
         s["crowd"] = int(min(max(int(s["crowd"]), 1), len(ROSTER)))
     except Exception:
         return dict(DEFAULTS)
-    for k in ("move_icons", "shots_over_icons", "react_to_windows",
+    for k in ("move_icons", "shots_over_icons", "blood", "react_to_windows",
               "sleep_when_idle", "all_monitors", "start_with_windows"):
         s[k] = bool(s[k])
     return s
@@ -1046,6 +1047,7 @@ class SettingsWindow:
         header("Look")
         slider("scale", "Size  (0.68 = icon height)", 0.35, 2.5, 0.01)
         slider("fps", "Frames per second", 15, 60, 1)
+        check("blood", "Blood and gore  (cartoon red, stains wash off)")
 
         header("Behaviour")
         slider("chaos", "Chaos level", 0.2, 3.0, 0.1)
@@ -1209,6 +1211,7 @@ GUNMETAL = "#C9D3F0"
 BOMBC = "#20263F"
 DUST = "#B9C4E0"
 BOLT = "#BFE6FF"
+BLOODC = ("#B0202B", "#8E1620", "#C4303A")   # spray shades; stains use the dark one
 
 # ==========================================================================
 #  terrain
@@ -1936,6 +1939,10 @@ class Fighter:
         self.surf_t = 0.0          # throttle for surf writes, like carry_t
         self.stunt = False         # this flight was his own idea (cannon)
         self.jet_y = y             # cruise height while on the jetpack
+        self.climb_top = 0.0       # the platform top a climb is heading for
+        self.climb_bot = 0.0       # ...and where its wall ends, for the grips
+        self.climb_x = 0.0         # the edge being scaled
+        self.climb_side = 1        # +1 = left edge, moving right onto the top
 
     # -- helpers ----------------------------------------------------------
     def become(self, kind):
@@ -2051,6 +2058,7 @@ class App:
         self.settings_win = None
         self.parts, self.shots, self.slashes, self.booms, self.bolts = [], [], [], [], []
         self.traps = []           # placed peels and springboards, ground props
+        self.stains = []          # where the blood setting leaves its mark
         self.shake_t = self.shake_m = 0.0
         self.sx = self.sy = 0.0
         self.mouse = {"x": -9999, "y": -9999, "t": -99, "vx": 0, "vy": 0}
@@ -2163,7 +2171,7 @@ class App:
         """The draw order, as tags. _frame_end() raises them in this sequence,
         so a rope drawn before a fighter still ends up behind him however the
         pools happened to grow."""
-        seq = ["dbg", "trap", "boom", "bolt", "part", "shot", "shotd", "slash"]
+        seq = ["dbg", "gore", "trap", "boom", "bolt", "part", "shot", "shotd", "slash"]
         self._rtag = []
         for i in range(len(self.fighters)):
             self._rtag.append(("rope%d" % i, "roped%d" % i))
@@ -2361,6 +2369,22 @@ class App:
         self.spark(x, y, 30 if big else 20, FIRE, 520 if big else 400, k)
         self.puff(x, y, 8 if big else 5, "#FFCF9A", k, 18)
         self.shake(.4 if big else .3, (16 if big else 10) * k)
+
+    def blood(self, x, y, n, k=1.0, spd=250):
+        """Red spray, only when the setting says so. Anything that lands
+        becomes a stain on the floor via fx_tick; nothing else in the fx
+        system persists, which is the whole point of gore."""
+        if not CFG["blood"]:
+            return
+        for _ in range(n):
+            a = random.random() * TAU
+            s = random.uniform(spd * .3, spd) * k
+            self.parts.append({"x": x, "y": y, "vx": math.cos(a) * s,
+                               "vy": math.sin(a) * s - random.uniform(30, 90) * k,
+                               "life": random.uniform(.4, 1.0), "t": 0,
+                               "col": random.choice(BLOODC),
+                               "r": random.uniform(1.4, 3.0) * max(.5, k),
+                               "g": 1050 * k, "k": "blood"})
 
     def bolt(self, x0, y0, x1, y1):
         pts, n = [], 9
@@ -2704,6 +2728,34 @@ class App:
             live.append(tr)
         self.traps = live
 
+    def try_climb(self, f, t):
+        """Scale the target's own platform edge instead of leaping at it.
+        Only from the ground, only when the top is a climbable 20..170px up,
+        and only once he has walked within arm's reach of the near edge --
+        which the hunt walk does on its own, since the centre lies past it."""
+        if not f.on_ground:
+            return False
+        top = t.get("top")
+        if top is None or not (20 < f.y - top < 170):
+            return False
+        l = t["cx"] - t["w"] / 2
+        r = t["cx"] + t["w"] / 2
+        if t.get("kind") == "window":
+            l, r = l + 6, r - 6
+        edge, side = (l, 1) if abs(f.x - l) <= abs(f.x - r) else (r, -1)
+        if abs(f.x - edge) > 26:
+            return False
+        f.climb_top = top
+        f.climb_bot = top + t.get("h", 64)
+        f.climb_x = edge
+        f.climb_side = side
+        f.x = edge - side * 6
+        f.face = side
+        f.vx = f.vy = 0.0
+        f.on_ground = False
+        f.set_state("climb")
+        return True
+
     # ==================================================================
     #  combat
     # ==================================================================
@@ -2931,6 +2983,8 @@ class App:
         vic.on_ground = False
         vic.anger = clamp(vic.anger + .07 * vic.per["grudge"], 0, 1)
         self.spark(vic.x, vic.y - 34 * vic.sc, 12, "#FFFFFF", 300, k)
+        # only flesh bleeds -- icons and windows keep their sparks
+        self.blood(vic.x, vic.y - 34 * vic.sc, min(3 + dmg // 3, 10), k)
         self.shake(.16, 6 * k)
         if vic.hp <= 0:
             vic.hp = 0
@@ -2944,6 +2998,12 @@ class App:
             MEM["who"][vic.kind]["streak"] = min(
                 -1, MEM["who"][vic.kind]["streak"] - 1)
             vic.yell("ko", 1.6)
+            if CFG["blood"]:
+                self.blood(vic.x, vic.y - 24 * vic.sc, 12, k)
+                self.stains.append({"x": vic.x + random.uniform(-6, 6),
+                                    "y": self.ground_at(vic.x),
+                                    "r": random.uniform(5.5, 8.5), "t": 0.0,
+                                    "life": random.uniform(10.0, 16.0)})
             att.anger = .2
             att.set_mood("smug")
             att.yell("victory", 1.8)
@@ -3185,6 +3245,9 @@ class App:
             f.tumble += f.vr * dt * (1 if not f.on_ground else 0)
             if f.on_ground:
                 f.vr = 0
+                if CFG["blood"] and random.random() < dt * 1.6:
+                    self.blood(f.x + random.uniform(-10, 10) * f.sc,
+                               f.y - 10 * f.sc, 1, K, 60)
             if f.st > 3.4:
                 f.hp = 100.0
                 f.tumble = 0
@@ -3419,14 +3482,20 @@ class App:
                 reach = REACH[f.plan] * (.4 + .6 * K)
                 d = t["cx"] - f.x
                 f.face = 1 if d >= 0 else -1
-                if f.on_ground and f.st > .3 and (abs(d) > 520 or t["top"] < f.y - 165) \
+                if f.on_ground and f.st > .3 and (abs(d) > 520 or t["top"] < f.y - 175) \
                         and random.random() < dt * 2.6:
                     self.fire_hook(f, t["cx"], t["top"] - 26)
                 elif abs(d) > reach - 20:
                     spd = (300 if f.mood == "furious" else 205) * K * f.per["dash"]
                     f.vx = approach(f.vx, f.face * spd, 1600 * K * dt)
-                    if f.on_ground and (random.random() < dt * .7 * f.per["hops"] or
-                                        (t["top"] < f.y - 70 and random.random() < dt * 3)):
+                    # something climbable overhead gets scaled, not bounced
+                    # at; the leap is kept for the tall, the far, and the
+                    # characters who were always going to bounce anyway
+                    if t["top"] < f.y - 40 and self.try_climb(f, t):
+                        pass
+                    elif f.on_ground and (random.random() < dt * .35 * f.per["hops"] or
+                                          (t["top"] < f.y - 70 and f.y - t["top"] >= 170
+                                           and random.random() < dt * 3)):
                         f.vy = -880 * K
                         f.set_state("jump")
                 elif self.time >= f.atk_cd:
@@ -3440,12 +3509,46 @@ class App:
                             else ("hunt" if f.target else "idle"))
         elif s == "ledge":
             f.vx = f.vy = 0
-            if f.st > .55:
-                f.vy = -760 * K
-                f.y -= 4
-                f.on_ground = False
+            if f.st > .5:
+                # haul up over the lip. This used to be a spring-jump off the
+                # ledge, which read as a pinball, not a person.
                 f.ledge_cd = self.time + 1.5   # not the same lip twice running
-                f.set_state("jump")
+                f.set_state("climb")
+        elif s == "climb":
+            # hand over hand up the side; physics is off, the wall is the
+            # physics. Terrain can shift underneath mid-climb -- the mantle
+            # onto empty air just becomes a fall, which reads fine.
+            f.vx = f.vy = 0.0
+            f.on_ground = False
+            f.face = f.climb_side
+            lip = f.climb_top + 44 * f.sc
+            if f.y > lip:
+                # he moves in PULLS: surge while an arm hauls, hang while it
+                # reaches for the next hold. A constant glide read as
+                # levitation, and the speed is paced so the pinned grips
+                # re-grab about twice a second, not in a blur.
+                pull = .55 + .9 * max(0.0, math.sin(self.time * 4.4))
+                f.y = max(f.y - (45 + 45 * K) * pull * dt, lip)
+                if random.random() < dt * 2.5:
+                    self.puff(f.x + f.face * 8 * f.sc,
+                              f.y - 16 * f.sc, 1, DUST, K * .5, 3)
+            else:
+                # the mantle: up and over in one motion
+                f.y = max(f.y - (70 + 80 * K) * dt, f.climb_top)
+                f.x = approach(f.x, f.climb_x + f.climb_side * 11,
+                               (60 + 40 * K) * dt)
+                if f.y <= f.climb_top + .5:
+                    f.y = f.climb_top
+                    f.x = f.climb_x + f.climb_side * 11
+                    f.on_ground = True
+                    f.squash = .3
+                    if f.target:
+                        f.set_state("hunt")
+                    else:
+                        f.set_state("idle")
+                        f.goal = self.time + .4
+            if f.st > 3.5:
+                f.set_state("fall")
         elif s == "wallslide":
             f.vy = min(f.vy, 150 * K)
             if f.on_ground or f.st > 1.4:
@@ -3591,7 +3694,7 @@ class App:
     def physics(self, f, dt, gy):
         K = f.K()
         if f.state in ("zip", "grabbed", "ledge", "sleep",
-                       "float", "ride", "blink", "surf", "jet"):
+                       "float", "ride", "blink", "surf", "jet", "climb"):
             if f.state == "sleep":
                 f.vy += 1900 * K * dt
                 f.y = min(gy, f.y + f.vy * dt)
@@ -3666,10 +3769,18 @@ class App:
                     continue
                 for edge in (x0, x1):
                     if abs(f.x - edge) < 16 and random.random() < .55:
-                        f.x = edge + (10 if edge == x0 else -10)
+                        # hang OUTSIDE the edge, same side the climb expects,
+                        # or the climb pose puts his hands behind his back
+                        f.x = edge - (6 if edge == x0 else -6)
                         f.y = py + 44 * f.sc
                         f.vx = f.vy = 0
                         f.face = 1 if edge == x0 else -1
+                        # the ledge resolves by climbing now, so it needs to
+                        # know what it caught
+                        f.climb_top = py
+                        f.climb_bot = py + 70
+                        f.climb_x = edge
+                        f.climb_side = f.face
                         f.set_state("ledge")
                         return
 
@@ -3905,6 +4016,10 @@ class App:
                             dist(sx, sy, f.x, f.y - 30 * f.sc) < rad:
                         f.anger = 0.0
                         f.set_mood("sulking")
+                if self.stains:
+                    # a soaking also mops the floor
+                    self.stains = [st for st in self.stains
+                                   if dist(sx, sy, st["x"], st["y"]) > rad]
             elif hit_f:
                 self.hit_fighter(s["owner"], hit_f,
                                  {"arrow": 10, "laser": 13, "pellet": 4,
@@ -3963,6 +4078,15 @@ class App:
                     p["y"] = gy
                     p["vy"] *= -.34
                     p["vx"] *= .7
+            elif p["k"] == "blood":
+                gy = self.ground_at(p["x"])
+                if p["y"] >= gy:
+                    if random.random() < .7:
+                        self.stains.append({"x": p["x"], "y": gy,
+                                            "r": random.uniform(1.8, 4.2),
+                                            "t": 0.0,
+                                            "life": random.uniform(8.0, 15.0)})
+                    continue                      # the drop is spent
             live.append(p)
         if len(live) > 300:
             del live[:len(live) - 300]
@@ -3970,6 +4094,8 @@ class App:
         self.slashes = self._age(self.slashes, dt)
         self.booms = self._age(self.booms, dt)
         self.bolts = self._age(self.bolts, dt)
+        self.stains = self._age(self.stains, dt)
+        del self.stains[:-40]         # a crime scene, not a flood
         if self.shake_t > 0:
             self.shake_t -= dt
             if self.shake_t <= 0:
@@ -4119,6 +4245,11 @@ class App:
                 self.line((x0, py, x1, py), "#3CE0A0" if kind == "icon" else "#5CA8FF", 2)
             for mon, work in self.mons:
                 self.line((work[0], work[3], work[2], work[3]), "#FF5B47", 2)
+
+        self.layer("gore")
+        for st in self.stains:
+            fade = clamp((st["life"] - st["t"]) / 3.0, 0.0, 1.0)
+            self.dot(st["x"], st["y"] - 1, st["r"] * (.5 + .5 * fade), BLOODC[1])
 
         self.layer("trap")
         for tr in self.traps:
@@ -4323,6 +4454,36 @@ class App:
             py, lean = -30, -.12
             fL, fR = (2, -6), (8, 4)
             hL, hR = (14, -58), (16, -40)
+        elif st == "climb":
+            # Hands GRAB. Each grip is a world-space hold on the edge line,
+            # quantized so it stays planted while the body rises and then
+            # snaps to the next hold -- offset half a step so the arms
+            # alternate. Both clamp at the lip, so near the top he is
+            # visibly hanging off the icon's top edge before the mantle.
+            # (Everything swinging on one shared sine read as doing the worm.)
+            py, lean = -28, .34
+            px = -3                                    # hips out, chest to the wall
+            # clamped hard: the fields describe a wall an arm's length away,
+            # and garbage in them must bend the pose, not fling the joints
+            ex = clamp((f.climb_x - f.x) / (f.face * S), 4, 18)
+            step = 34.0 * S
+            # grips ABOVE the head, past the edge line onto the face -- the
+            # ik straightens the arm to reach them, which is the whole
+            # hanging-on silhouette. Chest-height grips read as hugging.
+            bot = f.climb_bot - 6
+            gl = clamp(math.floor((f.y - 96 * S) / step) * step,
+                       f.climb_top, bot)
+            gr = clamp(math.floor((f.y - 78 * S) / step + .5) * step,
+                       f.climb_top, bot)
+            hL = (ex + 2, clamp((gl - f.y) / S, -100, 6))
+            hR = (ex + 4, clamp((gr - f.y) / S, -100, 6))
+            fstep = 30.0 * S
+            flw = clamp(math.floor((f.y - 4 * S) / fstep) * fstep,
+                        f.climb_top + 8, f.climb_bot + 16)
+            frw = clamp(math.floor((f.y + 8 * S) / fstep + .5) * fstep,
+                        f.climb_top + 8, f.climb_bot + 16)
+            fL = (ex + .5, clamp((flw - f.y) / S, -34, 2))
+            fR = (ex + 2, clamp((frw - f.y) / S, -34, 2))
         elif st == "carry":
             bob = math.sin(ph) * 2
             stride = 12

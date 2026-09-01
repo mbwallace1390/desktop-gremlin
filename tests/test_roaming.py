@@ -61,7 +61,8 @@ random.seed(20260901)
 app.fighters[0].x, app.fighters[0].y = 100.0, 40.0
 app.fighters[0].set_state("fall")
 
-GOING = ("walk", "fall", "jump", "ledge", "wallslide", "hunt", "carry", "zip")
+GOING = ("walk", "fall", "jump", "ledge", "wallslide", "hunt", "carry", "zip",
+         "climb")
 DT = 1 / 40.0
 FRAMES = 40 * 180                      # three minutes
 hist = [[] for _ in app.fighters]
@@ -141,6 +142,65 @@ if wraps == 0:
     bad.append("never wrapped to the other side in three minutes")
 if longest_all / 40.0 > 3:
     bad.append("spent %.1fs off screen in one go" % (longest_all / 40.0))
+
+# --- climbing: something overhead is scaled, not bounced at -----------------
+# One low icon, one hunter with a sword: reaching it means mounting it, and
+# mounting it should happen by the climb state, not by pogo-ing at the lip.
+gy2 = app.ground_at(1100)
+TOP = int(gy2) - 120
+CLIMB_ICON = [("Crate", 1150, TOP, 1214, int(gy2) - 56, 0)]
+
+
+def refresh2(own=0, want_icons=True):
+    t = app.terrain
+    t.icons, t.windows, t.moved, t.win_pos, t.icons_ok = \
+        list(CLIMB_ICON), [], {}, {}, True
+    tg, pl = [], []
+    for name, l, tp, r, b2, idx in t.icons:
+        tg.append({"cx": (l + r) / 2, "cy": (tp + b2) / 2, "top": tp,
+                   "name": name, "w": r - l, "h": b2 - tp,
+                   "kind": "icon", "key": idx})
+        pl.append((l, r, tp, "icon", idx))
+    t._targets, t.platforms = tg, pl
+    t.bounds = [(x["cx"], x["cy"], x["w"] / 2, max(x["h"], 26) / 2, x)
+                for x in tg]
+
+
+app.terrain.refresh = refresh2
+refresh2()
+_decide = app.decide
+app.decide = lambda ff: None            # the scenario steers, nobody improvises
+random.seed(4)
+f0, f1 = app.fighters[0], app.fighters[1]
+for g in (f0, f1):
+    g.hp, g.stun, g.vx, g.vy = 100.0, 0.0, 0.0, 0.0
+    g.foe, g.carry, g.mode = None, None, "roam"
+    g.on_ground = True
+f1.x, f1.y, f1.state, f1.goal = 200.0, app.ground_at(200), "idle", 1e9
+f0.x, f0.y = 940.0, gy2
+f0.state = "idle"
+seen, reached = set(), False
+for _ in range(40 * 14):
+    if f0.state == "idle":
+        tg2 = app.terrain.targets()
+        if not tg2:
+            break
+        f0.target, f0.plan, f0.hits = tg2[0], "sword", 0
+        f0.set_state("hunt")
+    app.update(DT)
+    seen.add(f0.state)
+    if abs(f0.y - TOP) < 3 and f0.on_ground:
+        reached = True
+        break
+app.decide = _decide
+print()
+print("climb overhead        : states %s"
+      % sorted(seen & {"hunt", "climb", "jump", "ledge"}))
+print("stood on the icon top : %s" % reached)
+if "climb" not in seen:
+    bad.append("never climbed an icon 120px overhead")
+if not reached:
+    bad.append("never stood on the icon he was scaling")
 
 ok = not bad and trips_total > 0
 print()

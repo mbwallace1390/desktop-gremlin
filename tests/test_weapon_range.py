@@ -360,6 +360,62 @@ if not refl:
     bad.append("the pan did not reflect an incoming round")
 b.state = "idle"
 
+# --- 1c2. blood is strictly opt-in, and lands as stains that wash off -------
+
+
+def swing_sword():
+    novelty("sword")
+    hits = []
+    real_hit = app.hit_fighter
+    app.hit_fighter = lambda att, vic, d: (hits.append(1), real_hit(att, vic, d))[1]
+    for _ in range(120):
+        app.update_fighter(a, 1 / 40.0)
+        app.projectiles(1 / 40.0)
+        if hits:
+            break
+    app.hit_fighter = real_hit
+    return bool(hits)
+
+
+gm.CFG["blood"] = False
+app.parts, app.stains = [], []
+hit = swing_sword()
+off_red = [p for p in app.parts if p.get("k") == "blood"]
+print("blood off             : hit=%s, %d blood particles" % (hit, len(off_red)))
+if not hit:
+    bad.append("the blood check's sword swing never landed")
+if off_red:
+    bad.append("blood appeared with the setting off")
+
+gm.CFG["blood"] = True
+app.parts, app.stains = [], []
+hit = swing_sword()
+on_red = [p for p in app.parts if p.get("k") == "blood"]
+for _ in range(120):                      # let the spray land
+    app.fx_tick(1 / 40.0)
+stained = len(app.stains)
+print("blood on              : hit=%s, %d particles, %d stains on the floor"
+      % (hit, len(on_red), stained))
+if not on_red:
+    bad.append("no blood with the setting on")
+if not stained:
+    bad.append("the spray never landed as a stain")
+
+# a water balloon mops the floor
+if stained:
+    st = app.stains[0]
+    app.shots = [{"k": "wballoon", "x": st["x"], "y": st["y"] - 4, "owner": a,
+                  "vx": 0.0, "vy": 200.0, "g": 0.0, "life": 1.0,
+                  "trail": [], "spin": 0.0}]
+    b.x = 99999.0
+    before = len(app.stains)
+    app.projectiles(1 / 40.0)
+    print("balloon on the stain  : %d -> %d stains" % (before, len(app.stains)))
+    if len(app.stains) >= before:
+        bad.append("the water balloon did not mop the stains")
+gm.CFG["blood"] = False
+app.stains = []
+
 # --- 1d. rounds leave from the drawn weapon, not from above it --------------
 # Reads the weapon back off the canvas rather than re-deriving the pose: the
 # muzzle spent a whole release spawning every shot ~10px above every gun,

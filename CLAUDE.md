@@ -10,7 +10,7 @@ Windows only — it talks to the Explorer shell directly.
 python tests\run_all.py
 ```
 
-Fourteen checks, a few seconds, nothing to install. Each one encodes a bug that
+Fifteen checks, a few seconds, nothing to install. Each one encodes a bug that
 actually shipped. They build a real Tk window and a real `App`, so windows
 flash on screen while they run; none of them touch your desktop icons, because
 the shell is stubbed out.
@@ -151,6 +151,27 @@ sight, and wrap again forever. There is no wall any more, so `wallslide` is
 currently an unreachable state. There used to be a hard ceiling 18px down, which
 put the top row of desktop icons *above* it and trapped them there in a
 grab-jump-bounce loop indefinitely; a ledge cooldown stops the re-grab.
+
+**A weapon is its family, and the family is a tuple.** Beyond the plain guns:
+`PULLERS` reel the victim in (the pull overrides hit_fighter's knockback,
+applied after the call so the 3-arg spies in the checks keep working),
+`DROPPERS` fall from the sky and only use REACH as walking distance, `TRAPS`
+become entries in `app.traps` where they land and are sprung by `traps_tick`
+(a peel thrown at a foe registers through `hit_fighter`, so a trap fight still
+counts as a fight everywhere fights are counted), and `SOFT` weapons deal
+moods, not wounds. The pan reflection happens inside the projectile
+fighter-hit loop and hands the round to the reflector — `s["owner"] = f` —
+so it can hit whoever fired it.
+
+**Joyrides are states that skip physics, and every one must clean up.**
+`RIDES` maps kind to transport menu; `start_ride` returns False when a
+precondition is missing so `decide()` falls through. `end_ride` is the only
+way out of the mount/rider/parachute/surf fields, and it is called from
+grabbing, sleeping, the crowd slider and `hit_fighter` — a dangling `mount`
+is the crowd-slider ghost bug wearing a new hat. Surfing rides a REAL icon
+through the same `can_move_icons()` gate as dragging, and the balloon never
+rises above `oy+120` because the roaming check counts `y < oy` as out of
+sight. `tests/test_rides.py` holds all of it.
 
 **The weapon he fires is the weapon he closed the distance for.** The fight
 state walks him to `REACH[f.plan]`, so `start_attack` must use `f.plan` and

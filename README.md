@@ -178,9 +178,28 @@ reason. Once you've been away five minutes they curl up and sleep.
 
 ## Loadout
 
-Sword and chainsaw up close. Bow, laser blaster, minigun, rocket launcher and a
-lightning gun at range. Bombs when they're feeling expressive. Grapple gun for
-getting around.
+Sword, chainsaw, a giant fish and a frying pan up close — the pan can bat an
+incoming round straight back at whoever fired it. Bow, laser blaster, minigun,
+rocket launcher and a lightning gun at range. Bombs when they're feeling
+expressive, and a blackhole grenade that pulls everything *inward* instead.
+A harpoon that reels the other one in, a magnet that drags your icons over. An
+anvil and a piano delivered from the sky onto a marked spot. A banana peel and
+a springboard placed on the ground and sprung by whoever steps there — owner
+included. And for the soft-hearted: a confetti cannon whose ammunition is a
+mood (the victim comes out *delighted*), and water balloons that put a fight
+out on the spot.
+
+## Getting around
+
+The grapple gun is no longer the only way to travel, and not everything they
+do is a fight — a bored gremlin is as likely to take a joyride or wander over
+to bother a colleague. Depending on who: a pogo stick, a skateboard, a balloon
+ride (poppable, and the sniper knows it), a teleport blink, a self-launching
+cannon, a jetpack that wobbles its way to a cruising height and then runs out
+of tank, riding on another one's shoulders, or surfing across the desktop
+standing on one of your actual icons — that last one obeys the same
+`move_icons` switch as dragging, and never happens without the layout backup.
+The nervous ones deploy a parachute on long falls. The grump rides nothing.
 
 ## Playing with them
 
@@ -293,7 +312,7 @@ screenshot.
 python tests\run_all.py
 ```
 
-Fourteen checks, a few seconds, nothing to install. They drive the real app
+Fifteen checks, a few seconds, nothing to install. They drive the real app
 with the Windows shell stubbed out, so they never touch your desktop. Every one
 of them encodes a bug that actually shipped.
 

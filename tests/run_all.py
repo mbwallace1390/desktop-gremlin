@@ -35,6 +35,7 @@ CHECKS = [
     ("diagnostics", "test_diagnostics.py", "logging and tray deferral"),
     ("icons", "test_icons.py", "shoving real desktop icons"),
     ("range", "test_weapon_range.py", "shots reaching their target"),
+    ("rides", "test_rides.py", "joyrides start, travel, end clean"),
     ("fight", "test_fight_choice.py", "firing the weapon he closed for"),
     ("behaviour", "test_behaviour.py", "greeting, context, rivalry"),
     ("crowd", "test_crowd.py", "one to ten, all behaving differently"),

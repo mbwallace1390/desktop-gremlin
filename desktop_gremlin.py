@@ -1327,17 +1327,38 @@ def line_for_icon(f, name):
 # ==========================================================================
 #  the fighters
 # ==========================================================================
-WEAPONS = ["sword", "bow", "blaster", "bomb", "rocket", "minigun", "chainsaw", "lightning"]
+WEAPONS = ["sword", "bow", "blaster", "bomb", "rocket", "minigun", "chainsaw",
+           "lightning", "fish", "pan", "confetti", "balloon", "harpoon",
+           "magnet", "blackhole", "anvil", "piano", "peel", "spring"]
 ATKDUR = {"sword": .42, "bow": .85, "blaster": .75, "bomb": .60,
-          "rocket": .90, "minigun": 1.40, "chainsaw": 1.20, "lightning": .80}
+          "rocket": .90, "minigun": 1.40, "chainsaw": 1.20, "lightning": .80,
+          "fish": .48, "pan": .40, "confetti": .55, "balloon": .60,
+          "harpoon": .70, "magnet": .65, "blackhole": .60, "anvil": .75,
+          "piano": .75, "peel": .55, "spring": .60}
 # How far off he opens fire. A round has to comfortably outrun the number here
 # or it dies in the air, and the minigun needs the widest margin of the lot
 # because it streams for 1.4s while both of them keep moving. Measured before
 # this changed: pellets flew 357px against a 241px firing distance, a margin of
-# 1.48 where the blaster had 1.84.
+# 1.48 where the blaster had 1.84. The droppers (anvil, piano) deliver from the
+# sky, so their number is only how close he bothers to walk.
 REACH = {"sword": 40, "bow": 480, "blaster": 420, "bomb": 230,
-         "rocket": 520, "minigun": 430, "chainsaw": 34, "lightning": 560}
-MELEE = ("sword", "chainsaw")
+         "rocket": 520, "minigun": 430, "chainsaw": 34, "lightning": 560,
+         "fish": 44, "pan": 38, "confetti": 150, "balloon": 210,
+         "harpoon": 380, "magnet": 300, "blackhole": 240, "anvil": 260,
+         "piano": 300, "peel": 120, "spring": 120}
+MELEE = ("sword", "chainsaw", "fish", "pan")
+MELEE_DMG = {"sword": 16, "chainsaw": 9, "fish": 12, "pan": 13}
+# How far each barrel reaches past the hand, in the same local units the
+# draw code uses -- the round should leave the END of the weapon, and these
+# mirror the furthest rel() point draw_weapon puts on the canvas for it.
+MUZZLE_TIP = {"blaster": 20, "lightning": 24, "minigun": 26, "rocket": 30,
+              "harpoon": 32, "magnet": 14, "confetti": 19, "blackhole": 12}
+# The four families beyond plain guns, so the code can ask what a weapon IS
+# instead of listing names at every site.
+PULLERS = ("harpoon", "magnet")           # hits drag the victim closer
+DROPPERS = ("anvil", "piano")             # delivered from the sky, straight down
+TRAPS = ("peel", "spring")                # placed on the ground, sprung later
+SOFT = ("confetti", "balloon")            # ammunition is a mood, barely a wound
 
 MOODS = ("bored", "hyped", "furious", "smug", "sulking", "asleep")
 
@@ -1385,34 +1406,34 @@ PALETTES = dict((n, palette(c)) for n, c in BASECOL.items())
 TRAITS = {
     "brawler":  {"aggro": 1.60, "chatty": 1.15, "grudge": 1.35, "dash": 1.20,
                  "hops": 1.10, "thief": .25, "nerve": .05,
-                 "weapons": ("chainsaw", "sword", "rocket", "bomb", "minigun")},
+                 "weapons": ("chainsaw", "harpoon", "sword", "fish", "rocket")},
     "sniper":   {"aggro": 0.70, "chatty": 0.60, "grudge": 0.75, "dash": 0.85,
                  "hops": 0.60, "thief": .30, "nerve": .35,
-                 "weapons": ("blaster", "lightning", "bow", "minigun", "rocket")},
+                 "weapons": ("blaster", "lightning", "bow", "minigun", "harpoon")},
     "coward":   {"aggro": 0.35, "chatty": 1.40, "grudge": 0.60, "dash": 1.30,
                  "hops": 1.40, "thief": .55, "nerve": .70,
-                 "weapons": ("bow", "blaster", "bomb", "minigun", "sword")},
+                 "weapons": ("peel", "bow", "balloon", "spring", "blaster")},
     "showoff":  {"aggro": 1.20, "chatty": 1.60, "grudge": 0.90, "dash": 1.05,
                  "hops": 1.35, "thief": .40, "nerve": .20,
-                 "weapons": ("rocket", "lightning", "minigun", "sword", "blaster")},
+                 "weapons": ("confetti", "rocket", "lightning", "piano", "minigun")},
     "grump":    {"aggro": 0.85, "chatty": 0.45, "grudge": 1.30, "dash": 0.70,
                  "hops": 0.45, "thief": .35, "nerve": .15,
-                 "weapons": ("sword", "chainsaw", "bomb", "rocket", "blaster")},
+                 "weapons": ("anvil", "sword", "chainsaw", "pan", "bomb")},
     "magpie":   {"aggro": 0.30, "chatty": 1.10, "grudge": 0.55, "dash": 1.25,
                  "hops": 1.30, "thief": .95, "nerve": .50,
-                 "weapons": ("bomb", "blaster", "bow", "sword", "minigun")},
+                 "weapons": ("magnet", "bomb", "peel", "blaster", "bow")},
     "zealot":   {"aggro": 1.75, "chatty": 1.25, "grudge": 1.60, "dash": 1.15,
                  "hops": 0.90, "thief": .20, "nerve": .00,
-                 "weapons": ("chainsaw", "rocket", "lightning", "sword", "bomb")},
+                 "weapons": ("chainsaw", "blackhole", "rocket", "lightning", "anvil")},
     "tinkerer": {"aggro": 0.80, "chatty": 0.75, "grudge": 0.85, "dash": 0.80,
                  "hops": 0.70, "thief": .60, "nerve": .30,
-                 "weapons": ("bomb", "rocket", "minigun", "blaster", "bow")},
+                 "weapons": ("spring", "magnet", "bomb", "blackhole", "rocket")},
     "drama":    {"aggro": 0.95, "chatty": 1.75, "grudge": 1.45, "dash": 1.00,
                  "hops": 1.20, "thief": .45, "nerve": .55,
-                 "weapons": ("lightning", "sword", "bow", "blaster", "bomb")},
+                 "weapons": ("fish", "lightning", "piano", "sword", "balloon")},
     "veteran":  {"aggro": 1.05, "chatty": 0.35, "grudge": 0.70, "dash": 0.95,
                  "hops": 0.75, "thief": .30, "nerve": .25,
-                 "weapons": ("sword", "blaster", "bow", "minigun", "chainsaw")},
+                 "weapons": ("pan", "sword", "blaster", "bow", "minigun")},
 }
 
 # Every line any of them can say. {name} is an icon he has just made off with;
@@ -1827,6 +1848,31 @@ VOICES = {
 SPEECH_FONT = {"tinkerer": ("Consolas", "bold"),
                "drama": ("Segoe UI", "bold italic")}
 
+# How each of them gets around when nobody is fighting. Not a TRAITS axis:
+# temperament numbers feed arithmetic, this is a menu. surf needs move_icons
+# and rides a real icon; shoulders needs a willing colleague standing about;
+# the grump rides nothing, which is the most in-character line in the table.
+RIDES = {
+    "brawler":  ("cannon", "pogo"),
+    "sniper":   ("blink", "float"),
+    "coward":   ("pogo", "float", "shoulders"),
+    "showoff":  ("skate", "cannon", "shoulders", "jet"),
+    "grump":    (),
+    "magpie":   ("surf", "blink", "shoulders"),
+    "zealot":   ("blink", "cannon", "jet"),
+    "tinkerer": ("skate", "float", "jet"),
+    "drama":    ("float", "cannon"),
+    "veteran":  ("skate", "pogo"),
+}
+# the rides that go SOMEWHERE -- these can inherit a walk's destination;
+# the rest (float, surf, shoulders) go where they please. The cannon counts:
+# it is a ballistic commute, and keeping it leisure-only made it nearly
+# extinct once travel became how rides mostly start.
+TRAVEL_RIDES = ("pogo", "skate", "jet", "blink", "cannon")
+CONFETTI_COLS = ("#FF8AD8", "#6FD8FF", "#FFD35C", "#A8E86A", "#B79BFF")
+WATER = "#7FBBFF"
+WOOD = "#C89A66"
+
 
 class Fighter:
     def __init__(self, x, y, kind=ROSTER[0]):
@@ -1883,6 +1929,13 @@ class Fighter:
         self.atk_cd = 0.0
         self.snatch = False
         self.carry_dest_y = y
+        self.mount = None          # the colleague he is riding, in "ride"
+        self.ridden_by = None      # ...and the back-reference on the mount
+        self.chute = False         # parachute open mid-fall
+        self.surf_idx = None       # (idx, offx, offy, w, h) of the icon under him
+        self.surf_t = 0.0          # throttle for surf writes, like carry_t
+        self.stunt = False         # this flight was his own idea (cannon)
+        self.jet_y = y             # cruise height while on the jetpack
 
     # -- helpers ----------------------------------------------------------
     def become(self, kind):
@@ -1890,6 +1943,10 @@ class Fighter:
         self.kind = kind
         self.pal = PALETTES[kind]
         self.per = TRAITS[kind]
+        # A stable per-character phase for sway and bobbing. Not id(): that
+        # varies run to run, and one non-deterministic input unseeds every
+        # simulation the checks run.
+        self.seedp = sum(map(ord, kind)) % 7
 
     def line(self, event, **fmt):
         txt = random.choice(VOICES[self.kind][event])
@@ -1993,6 +2050,7 @@ class App:
         self.running = True
         self.settings_win = None
         self.parts, self.shots, self.slashes, self.booms, self.bolts = [], [], [], [], []
+        self.traps = []           # placed peels and springboards, ground props
         self.shake_t = self.shake_m = 0.0
         self.sx = self.sy = 0.0
         self.mouse = {"x": -9999, "y": -9999, "t": -99, "vx": 0, "vy": 0}
@@ -2062,6 +2120,7 @@ class App:
         had = len(keep)
         for f in self.fighters[want:]:
             self.drop_icon(f)          # never leave one holding a real icon
+            self.end_ride(f)           # ...or a rider sat on a ghost
         for i in range(len(keep), want):
             x = self.ox + self.W * (i + 1.0) / (want + 1.0)
             keep.append(Fighter(x, self.ground_at(x), ROSTER[i]))
@@ -2104,7 +2163,7 @@ class App:
         """The draw order, as tags. _frame_end() raises them in this sequence,
         so a rope drawn before a fighter still ends up behind him however the
         pools happened to grow."""
-        seq = ["dbg", "boom", "bolt", "part", "shot", "shotd", "slash"]
+        seq = ["dbg", "trap", "boom", "bolt", "part", "shot", "shotd", "slash"]
         self._rtag = []
         for i in range(len(self.fighters)):
             self._rtag.append(("rope%d" % i, "roped%d" % i))
@@ -2217,6 +2276,8 @@ class App:
         if not f:
             return
         f.grabbed = True
+        self.end_ride(f)
+        f.stunt = False
         f.gx, f.gy = e.x + self.ox, e.y + self.oy + 58 * f.sc
         f.set_state("grabbed")
         f.anger = clamp(f.anger + .28 * f.per["grudge"], 0, 1)
@@ -2366,6 +2427,34 @@ class App:
                                   if e[5] not in moved_idx] + fresh
         return moved
 
+    def yank_icon(self, t, toward_x):
+        """The magnet's icon shot: drag one real icon 120px toward the owner.
+        Same probe-offset dance as blast_icons, same undo rules."""
+        if not self.can_move_icons() or t.get("kind") != "icon":
+            return False
+        held = {o.carry["idx"] for o in self.fighters if o.carry}
+        held |= {o.surf_idx[0] for o in self.fighters if o.surf_idx}
+        idx = t["key"]
+        if idx in held or not SHELL.open():
+            return False
+        try:
+            rect = SHELL.item_rect(idx)
+            probe = SHELL.item_pos(idx)
+        except Exception:
+            return False
+        if not rect:
+            return False
+        offx, offy = probe[0] - rect[0], probe[1] - rect[1]
+        w, h = rect[2] - rect[0], rect[3] - rect[1]
+        d = 1 if toward_x > rect[0] else -1
+        gy = self.ground_at(rect[0])
+        nx = clamp(rect[0] + d * 120, self.ox + 4, self.ox + self.W - w - 4)
+        ny = clamp(rect[1], self.oy + 4, gy - h - 4)
+        if SHELL.set_item_pos(idx, nx + offx, ny + offy):
+            self.puff(rect[0] + w / 2, rect[1] + h, 4, DUST, .7, 10)
+            return True
+        return False
+
     def pick_up_icon(self, f, tgt):
         if not self.can_move_icons() or f.carry or tgt.get("kind") != "icon":
             return False
@@ -2430,6 +2519,192 @@ class App:
         f.carry = None
 
     # ==================================================================
+    #  joyrides — getting around when nobody is fighting
+    # ==================================================================
+    def end_ride(self, f):
+        """Put every ride field away: mount references both ways, the open
+        parachute, the icon he was surfing. Callers set the next state; this
+        only guarantees nothing dangles. A dangling mount is the crowd-slider
+        bug all over again -- a reference to a fighter who no longer exists."""
+        if f.mount is not None:
+            if f.mount.ridden_by is f:
+                f.mount.ridden_by = None
+            f.mount = None
+        if f.ridden_by is not None:
+            r = f.ridden_by
+            f.ridden_by = None
+            if r.mount is f:
+                r.mount = None
+            if r.state == "ride":
+                r.vy = -260 * r.K()
+                r.set_state("fall")
+        f.chute = False
+        f.surf_idx = None
+
+    def joyride(self, f, dest=None, travel_only=False):
+        """Try the character's transport menu until one starts. One miss --
+        nobody nearby to sit on, no icon in reach -- used to end the whole
+        idea, which was half of why the grapple hook outdrew every ride 13:1
+        (67 hooks to 5 rides, measured over four minutes at crowd five).
+        The other half was the rage gate: in a standing brawl 127 of 156
+        decides were made angry, so leisure never got a turn. With a dest or
+        travel_only, only the rides that actually go somewhere qualify --
+        rage may not lounge on a balloon, but it will absolutely pogo at you."""
+        rides = RIDES[f.kind]
+        if dest is not None or travel_only:
+            rides = tuple(k for k in rides if k in TRAVEL_RIDES)
+        if not rides:
+            return False
+        for kind in random.sample(rides, len(rides)):
+            if self.start_ride(f, kind, dest=dest):
+                f.boredom = max(0.0, f.boredom - .35)
+                return True
+        return False
+
+    def start_ride(self, f, kind, dest=None):
+        """Begin one of RIDES[f.kind]. False when the preconditions are not
+        there -- no icon to surf, nobody to sit on -- so decide() can fall
+        through to something else instead of stalling on a wish."""
+        self.end_ride(f)
+        K = f.K()
+        if kind == "blink":
+            f.wander_to = clamp(dest, self.ox + 80, self.ox + self.W - 80) \
+                if dest is not None else \
+                random.uniform(self.ox + 80, self.ox + self.W - 80)
+            f.set_state("blink")
+            return True
+        if kind in ("pogo", "skate"):
+            if not f.on_ground:
+                return False
+            f.wander_to = clamp(dest, self.ox + 70, self.ox + self.W - 70) \
+                if dest is not None else \
+                clamp(f.x + random.choice((-1, 1)) * random.uniform(340, 900),
+                      self.ox + 70, self.ox + self.W - 70)
+            f.face = 1 if f.wander_to >= f.x else -1
+            f.set_state(kind)
+            return True
+        if kind == "float":
+            f.set_state("float")
+            f.vx = random.uniform(-40, 40) * K
+            f.goal = self.time + random.uniform(4.0, 7.5)
+            return True
+        if kind == "jet":
+            gy = self.ground_at(f.x)
+            f.wander_to = clamp(dest, self.ox + 80, self.ox + self.W - 80) \
+                if dest is not None else \
+                clamp(f.x + random.choice((-1, 1)) * random.uniform(320, 900),
+                      self.ox + 80, self.ox + self.W - 80)
+            f.jet_y = clamp(gy - random.uniform(180, 340), self.oy + 130, gy - 120)
+            f.goal = self.time + random.uniform(3.5, 6.0)
+            f.face = 1 if f.wander_to >= f.x else -1
+            f.set_state("jet")
+            f.chat("hook", 1.0)      # the ascent lines fit the lift-off
+            return True
+        if kind == "cannon":
+            if not f.on_ground:
+                return False
+            f.wander_to = clamp(dest, self.ox + 80, self.ox + self.W - 80) \
+                if dest is not None else \
+                clamp(f.x + random.choice((-1, 1)) * random.uniform(380, 950),
+                      self.ox + 80, self.ox + self.W - 80)
+            f.set_state("cannonwind")
+            return True
+        if kind == "surf":
+            # Rides a REAL icon, so it wants everything icon-dragging wants:
+            # the move_icons switch, a backup to undo with, auto-arrange off.
+            if not self.can_move_icons():
+                return False
+            held = {o.carry["idx"] for o in self.fighters if o.carry}
+            held |= {o.surf_idx[0] for o in self.fighters if o.surf_idx}
+            picks = [t for t in self.terrain.targets()
+                     if t["kind"] == "icon" and t["key"] not in held
+                     and abs(t["cx"] - f.x) < 260]
+            if not picks or not SHELL.open():
+                return False
+            t = min(picks, key=lambda p: abs(p["cx"] - f.x))
+            try:
+                rect = SHELL.item_rect(t["key"])
+                lx, ly = SHELL.item_pos(t["key"])
+            except Exception:
+                return False
+            if not rect:
+                return False
+            self.puff(f.x, f.y, 3, DUST, K, 8)
+            f.surf_idx = (t["key"], lx - rect[0], ly - rect[1],
+                          rect[2] - rect[0], rect[3] - rect[1])
+            f.x, f.y = t["cx"], t["top"]
+            f.on_ground = False
+            f.surf_t = 0.0
+            f.wander_to = clamp(f.x + random.choice((-1, 1)) * random.uniform(300, 800),
+                                self.ox + 90, self.ox + self.W - 90)
+            f.set_state("surf")
+            f.chat("hook", 1.0)
+            return True
+        if kind == "shoulders":
+            mounts = [o for o in self.fighters
+                      if o is not f and o.ridden_by is None and o.on_ground
+                      and o.state in ("idle", "walk", "taunt")
+                      and not o.carry and abs(o.x - f.x) < 90]
+            if not mounts:
+                return False
+            m = min(mounts, key=lambda o: abs(o.x - f.x))
+            f.mount, m.ridden_by = m, f
+            f.on_ground = False
+            f.goal = self.time + random.uniform(5.0, 9.0)
+            f.set_state("ride")
+            f.chat(f.mood, 1.4)
+            return True
+        return False
+
+    def traps_tick(self, dt):
+        """Age the placed peels and springboards, and spring them on whoever
+        steps there. A peel thrown at a foe registers through hit_fighter so
+        a trap fight is still a fight; stepping on your own is just comedy."""
+        if not self.traps:
+            return
+        live = []
+        for tr in self.traps:
+            tr["t"] += dt
+            if tr["t"] > tr["life"]:
+                self.puff(tr["x"], tr["y"], 2, DUST, .6, 6)
+                continue
+            sprung = False
+            if tr["t"] > tr["arm"]:
+                for f in self.fighters:
+                    if f.hp <= 0 or not f.on_ground or \
+                            f.state in ("ko", "grabbed", "sleep", "ledge"):
+                        continue
+                    if abs(f.x - tr["x"]) > 20 or abs(f.y - tr["y"]) > 8:
+                        continue
+                    K = f.K()
+                    if tr["k"] == "peel":
+                        own = tr["owner"]
+                        if own is not None and own is not f and own.hp > 0:
+                            self.hit_fighter(own, f, 3)
+                        else:
+                            f.vr = math.copysign(random.uniform(5, 9), f.vx or 1)
+                            f.vy = -300 * K
+                            f.on_ground = False
+                            f.set_state("thrown")
+                        self.puff(f.x, tr["y"], 4, "#FFE97A", K, 10)
+                        sprung = True
+                    else:
+                        # springboard: transport for anyone, owner included
+                        f.vy = -1250 * K
+                        f.vx = clamp(f.vx * 1.2, -420 * K, 420 * K)
+                        f.on_ground = False
+                        f.squash = -.5
+                        f.set_state("jump")
+                        self.puff(f.x, tr["y"], 4, DUST, K, 8)
+                        self.shake(.06, 2)
+                        tr["arm"] = tr["t"] + 1.0   # re-arm, multi-use
+                    break
+            if sprung:
+                continue                            # a peel is consumed
+            live.append(tr)
+        self.traps = live
+
+    # ==================================================================
     #  combat
     # ==================================================================
     def fire_hook(self, f, tx, ty):
@@ -2452,7 +2727,7 @@ class App:
         else:
             f.set_state("idle")
             return
-        f.aim = math.atan2(cy - (f.y - 58 * f.sc), cx - f.x)
+        f.aim = math.atan2(cy - (f.y - 44 * f.sc), cx - f.x)
         f.face = 1 if cx > f.x else -1
         if at is not None:
             f.weapon = "sword" if abs(cx - f.x) < 70 else random.choice(["blaster", "bow"])
@@ -2483,7 +2758,7 @@ class App:
                 f.shot_tgt = (f.target["kind"], f.target["key"])
         if f.weapon == "bow":
             k = f.K()
-            ang = lob_angle(cx - f.x, cy - (f.y - 58 * f.sc), 720 * k, 420 * k)
+            ang = lob_angle(cx - f.x, cy - (f.y - 44 * f.sc), 720 * k, 420 * k)
             if ang is not None:
                 f.aim = ang
         f.atk_dur = ATKDUR[f.weapon]
@@ -2493,8 +2768,18 @@ class App:
         f.set_state("attack")
 
     def muzzle(self, f):
-        return (f.x + math.cos(f.aim) * 26 * f.sc,
-                f.y - 58 * f.sc + math.sin(f.aim) * 26 * f.sc)
+        """Where a round leaves: the END of the weapon in the hand. The
+        attack poses hold the hand at local (-44, radius ~35) and each barrel
+        runs MUZZLE_TIP further along the aim. For a whole release every shot
+        spawned from the shoulder at (-58, 26) instead -- visibly above every
+        gun -- and the first fix stopped at the hand, visibly short of every
+        barrel. If the poses move, this moves with them."""
+        r = (34 + MUZZLE_TIP.get(f.weapon, 0)) * f.sc
+        # -37, not the hand's -44: the barrels are drawn along the forearm,
+        # which droops below the aim ray. Measured against the rendered tips
+        # (blaster -7.4px, harpoon -8.7px before this constant existed).
+        return (f.x + math.cos(f.aim) * r,
+                f.y - 37 * f.sc + math.sin(f.aim) * r)
 
     def shoot(self, f, kind, speed, grav, life, extra=None):
         hx, hy = self.muzzle(f)
@@ -2545,6 +2830,66 @@ class App:
             self.spark(tx, ty, 14, BOLT, 320, k)
             self.shake(.18, 7 * k)
             self.zap_hit(f, tx, ty)
+        elif w == "fish":
+            self.slashes.append({"x": f.x + f.face * 34 * f.sc, "y": f.y - 52 * f.sc,
+                                 "a": f.aim, "t": 0, "life": .26, "sc": f.sc,
+                                 "col": "#9FD8E8"})
+            self.melee_hit(f, 130)
+            self.puff(f.x + f.face * 30 * f.sc, f.y - 40 * f.sc, 3, WATER, k, 8)
+            self.shake(.10, 3 * k)
+        elif w == "pan":
+            self.slashes.append({"x": f.x + f.face * 30 * f.sc, "y": f.y - 50 * f.sc,
+                                 "a": f.aim, "t": 0, "life": .18, "sc": f.sc,
+                                 "col": GUNMETAL})
+            self.melee_hit(f, 110)
+            self.shake(.14, 5 * k)
+        elif w == "confetti":
+            base = f.aim
+            for _ in range(7):
+                f.aim = base + random.uniform(-.24, .24)
+                self.shoot(f, "confetti", 780, 25, .75,
+                           extra={"col": random.choice(CONFETTI_COLS)})
+            f.aim = base
+            self.spark(*self.muzzle(f), 6, random.choice(CONFETTI_COLS), 200, k)
+        elif w == "balloon":
+            hx, hy = self.muzzle(f)
+            self.shots.append({"k": "wballoon", "x": hx, "y": hy, "owner": f,
+                               "vx": math.cos(f.aim) * 430 * k,
+                               "vy": math.sin(f.aim) * 430 * k - 240 * k,
+                               "g": 900 * k, "life": 2.2, "trail": [],
+                               "spin": 0.0, "pierce": f.shot_pierce,
+                               "tgt": f.shot_tgt})
+        elif w == "harpoon":
+            self.shoot(f, "harpoon", 800, 8, 1.4)
+            self.shake(.10, 3 * k)
+        elif w == "magnet":
+            self.shoot(f, "magnet", 780, 0, 1.2)
+            self.spark(*self.muzzle(f), 4, "#E05A3A", 160, k)
+        elif w == "blackhole":
+            hx, hy = self.muzzle(f)
+            self.shots.append({"k": "blackhole", "x": hx, "y": hy, "owner": f,
+                               "vx": math.cos(f.aim) * 430 * k,
+                               "vy": math.sin(f.aim) * 430 * k - 240 * k,
+                               "g": 900 * k, "life": 2.2, "trail": [],
+                               "spin": 0.0, "pierce": f.shot_pierce,
+                               "tgt": f.shot_tgt})
+        elif w in DROPPERS:
+            # Delivered from the sky, straight down onto where he is looking.
+            # pierce is free here -- nothing on the way matters but the target.
+            tx, ty = self.aim_point(f)
+            self.shots.append({"k": w, "x": tx + random.uniform(-8, 8),
+                               "y": min(f.y - 80 * f.sc, ty) - 430,
+                               "owner": f, "vx": 0.0, "vy": 30 * k,
+                               "g": 1500 * k, "life": 3.0, "trail": [],
+                               "spin": 0.0, "pierce": True, "tgt": f.shot_tgt})
+        elif w in TRAPS:
+            # tossed a short way ahead; becomes a ground prop where it lands
+            self.shots.append({"k": w, "x": f.x + f.face * 14 * f.sc,
+                               "y": f.y - 60 * f.sc, "owner": f,
+                               "vx": math.cos(f.aim) * 360 * k,
+                               "vy": math.sin(f.aim) * 360 * k - 200 * k,
+                               "g": 900 * k, "life": 2.0, "trail": [],
+                               "spin": 0.0, "pierce": True, "tgt": None})
 
     def aim_point(self, f):
         # The foe test has to come first. It used to read `f.state == "fight" or
@@ -2555,13 +2900,13 @@ class App:
             return f.foe.x, f.foe.y - 34 * f.foe.sc
         if f.target:
             return f.target["cx"], f.target["cy"]
-        return (f.x + math.cos(f.aim) * 400, f.y - 58 * f.sc + math.sin(f.aim) * 400)
+        return (f.x + math.cos(f.aim) * 400, f.y - 44 * f.sc + math.sin(f.aim) * 400)
 
     def melee_hit(self, f, reach):
         rk = .4 + .6 * f.K()
         if f.foe and f.foe.hp > 0 and dist(f.x, f.y - 30 * f.sc, f.foe.x,
                                            f.foe.y - 30 * f.foe.sc) < reach * rk:
-            self.hit_fighter(f, f.foe, 16 if f.weapon == "sword" else 9)
+            self.hit_fighter(f, f.foe, MELEE_DMG.get(f.weapon, 9))
             return
         if f.target and dist(f.x, f.y - 40 * f.sc, f.target["cx"], f.target["cy"]) < reach * rk:
             self.hit_target(f, f.target, f.target["cx"], f.target["cy"])
@@ -2575,6 +2920,9 @@ class App:
     def hit_fighter(self, att, vic, dmg):
         if vic.state in ("ko", "grabbed"):
             return
+        if vic.state in ("float", "ride", "surf"):
+            # a hit pops the balloon, knocks him off the shoulders or the icon
+            self.end_ride(vic)
         vic.hp -= dmg
         k = vic.K()
         d = 1 if vic.x >= att.x else -1
@@ -2685,6 +3033,26 @@ class App:
             f.chat("cursor", 1.4)
             return
 
+        # Not everything is a fight. With his own way of getting around, a
+        # bored one is now as likely to take a joyride, or wander over to
+        # bother a colleague, as to start something. Rage still fights --
+        # but rage travels too, it just doesn't lounge.
+        if random.random() < .30 + .25 * f.boredom \
+                and self.joyride(f, travel_only=rage):
+            return
+        if not rage and random.random() < .07:
+            others = [o for o in self.fighters
+                      if o is not f and o.hp > 0
+                      and o.state in ("idle", "walk", "taunt")]
+            if others:
+                o = random.choice(others)
+                f.target = None
+                f.wander_to = clamp(o.x + random.uniform(-80, 80),
+                                    self.ox + 60, self.ox + self.W - 60)
+                f.set_state("walk")
+                f.chat(f.mood, 1.6)
+                return
+
         if alive and r < .18:
             t = random.choice(alive)
             self.fire_hook(f, t["cx"], t["top"] - 26)
@@ -2730,6 +3098,10 @@ class App:
             return
 
         if not alive and r < .45:
+            # travel for its own sake: half the time that is a ride now,
+            # not another zip line
+            if random.random() < .5 and self.joyride(f):
+                return
             self.fire_hook(f, random.uniform(self.ox + self.W * .1, self.ox + self.W * .9),
                            random.uniform(self.oy + 40, self.ground_at(f.x) - 200))
             f.target = None
@@ -2740,6 +3112,8 @@ class App:
         # Always somewhere on the screen. A target out past the wrap point can
         # never be reached: he crosses the edge, reappears on the far side, and
         # sets off towards it again for as long as you leave him.
+        if random.random() < .25 and self.joyride(f):
+            return
         f.target = None
         f.wander_to = random.uniform(self.ox + 60, self.ox + self.W - 60)
         f.set_state("walk")
@@ -2763,6 +3137,7 @@ class App:
 
         if self.asleep and f.state not in ("sleep", "grabbed", "thrown", "ko"):
             self.drop_icon(f)
+            self.end_ride(f)
             f.set_state("sleep")
             f.set_mood("asleep", quiet=True)
         if not self.asleep and f.state == "sleep":
@@ -2828,6 +3203,13 @@ class App:
                 f.set_state("idle")
                 f.goal = self.time + random.uniform(.6, 1.8)
             else:
+                # a long trudge upgrades itself into transport, same
+                # destination -- walking is constant, so this is where the
+                # rides actually get used rather than the rare idle roll
+                if f.on_ground and abs(d) > 300 and f.mode != "fight" \
+                        and random.random() < dt * .35 \
+                        and self.joyride(f, dest=f.wander_to):
+                    return
                 nf = 1 if d > 0 else -1
                 if nf != f.face and abs(f.vx) > 120 * K:
                     f.skid = 1.0
@@ -2849,6 +3231,138 @@ class App:
                                 1500 * K * dt)
                 if f.on_ground and random.random() < dt * .8 * f.per["hops"]:
                     f.vy = -700 * K
+        elif s == "blink":
+            f.vx = 0
+            if f.st > .22 and abs(f.x - f.wander_to) > 2:
+                self.puff(f.x, f.y - 20 * f.sc, 5, f.color(), K, 8)
+                f.x = f.wander_to
+                f.y = self.ground_at(f.x)
+                f.on_ground = True
+                self.puff(f.x, f.y - 20 * f.sc, 5, f.color(), K, 8)
+            if f.st > .5:
+                f.set_state("idle")
+                f.goal = self.time + random.uniform(.4, 1.2)
+        elif s == "pogo":
+            d = f.wander_to - f.x
+            f.face = 1 if d >= 0 else -1
+            if (abs(d) < 46 and f.on_ground) or f.st > 9:
+                f.set_state("idle")
+                f.goal = self.time + random.uniform(.5, 1.4)
+            elif f.on_ground:
+                # the stick does the walking: one bounce per contact
+                f.vy = -820 * K
+                f.vx = math.copysign(min(abs(d), 200), d) * K * 1.15
+                f.squash = .6
+                self.puff(f.x, f.y, 2, DUST, K, 6)
+        elif s == "skate":
+            d = f.wander_to - f.x
+            f.face = 1 if d >= 0 else -1
+            if (abs(d) < 30 and f.on_ground) or f.st > 8:
+                f.vx *= .4
+                f.set_state("idle")
+                f.goal = self.time + random.uniform(.4, 1.2)
+            else:
+                f.vx = approach(f.vx, f.face * 330 * K, 900 * K * dt)
+                if f.on_ground and random.random() < dt * 1.1:
+                    f.vy = -560 * K            # ollie, for the fun of it
+                if f.on_ground and random.random() < dt * 6:
+                    self.puff(f.x - f.face * 10, f.y, 1, DUST, K * .7, 4)
+        elif s == "float":
+            # balloon ride: no physics, the string does the flying. Never
+            # above oy+120 -- out of sight upward is still out of sight.
+            rise = -44 * K if f.y > self.oy + 120 else 0.0
+            f.x += (f.vx + math.sin(self.time * 1.1 + f.seedp) * 34 * K) * dt
+            f.y += rise * dt + math.sin(self.time * 2.3 + f.seedp) * 10 * K * dt
+            f.x = clamp(f.x, self.ox + 40, self.ox + self.W - 40)
+            f.on_ground = False
+            if self.time > f.goal or f.st > 10:
+                self.spark(f.x + 9 * f.sc, f.y - 112 * f.sc, 8, f.color(), 240, K)
+                f.vy = 40 * K
+                f.set_state("fall")
+        elif s == "jet":
+            # no physics: the pack is the physics. Chases a cruise point,
+            # wobbles, and cuts out either on arrival or when the tank
+            # (f.goal) runs dry -- the landing is an ordinary fall.
+            dx = f.wander_to - f.x
+            dy = f.jet_y - f.y
+            f.face = 1 if dx >= 0 else -1
+            wob = math.sin(self.time * 5 + f.seedp) * 30
+            f.vx = approach(f.vx, clamp(dx * 2.0 + wob, -320, 320) * K,
+                            700 * K * dt)
+            f.vy = approach(f.vy, clamp(dy * 2.0, -260, 260) * K, 900 * K * dt)
+            f.x = clamp(f.x + f.vx * dt, self.ox + 40, self.ox + self.W - 40)
+            f.y = max(f.y + f.vy * dt, self.oy + 110)
+            f.on_ground = False
+            if random.random() < dt * 26:
+                self.spark(f.x - f.face * 7 * f.sc, f.y - 34 * f.sc, 1,
+                           FIRE, 90, K * .6)
+            if random.random() < dt * 7:
+                self.puff(f.x - f.face * 8 * f.sc, f.y - 28 * f.sc, 1,
+                          DUST, K * .5, 4)
+            if (abs(dx) < 30 and abs(dy) < 60) or self.time > f.goal or f.st > 9:
+                self.puff(f.x, f.y - 30 * f.sc, 3, DUST, K * .7, 8)
+                f.set_state("fall")
+        elif s == "surf":
+            si = f.surf_idx
+            if si is None or not self.can_move_icons():
+                # the ride is tied to the setting; flipping it off mid-surf
+                # (or losing the icon) just tips him off where he is
+                f.surf_idx = None
+                f.set_state("fall")
+            else:
+                d = f.wander_to - f.x
+                f.face = 1 if d >= 0 else -1
+                f.x += clamp(d, -190, 190) * K * dt
+                f.on_ground = False
+                f.vx = f.vy = 0
+                f.surf_t += dt
+                if f.surf_t >= .12:
+                    f.surf_t = 0.0
+                    idx, offx, offy, w, h = si
+                    try:
+                        SHELL.set_item_pos(idx, f.x - w / 2 + offx, f.y + offy)
+                    except Exception:
+                        f.surf_idx = None
+                if random.random() < dt * 5:
+                    self.puff(f.x - f.face * 16, f.y + 8, 1, DUST, K * .7, 5)
+                if abs(d) < 24 or f.st > 10:
+                    f.surf_idx = None
+                    f.vy = -300 * K
+                    f.vx = f.face * 120 * K
+                    f.set_mood("smug")
+                    f.set_state("fall")
+        elif s == "ride":
+            m = f.mount
+            if (m is None or m.hp <= 0 or m not in self.fighters or
+                    m.state in ("ko", "grabbed", "thrown", "sleep", "fight",
+                                "attack", "float", "ride", "blink", "surf")):
+                self.end_ride(f)
+                f.vy = -240 * K
+                f.set_state("fall")
+            elif self.time > f.goal:
+                self.end_ride(f)
+                f.vy = -380 * K
+                f.vx = f.face * 130 * K
+                f.set_state("fall")
+            else:
+                f.x = m.x
+                f.y = m.y - 58 * m.sc
+                f.face = m.face
+                f.on_ground = False
+        elif s == "cannonwind":
+            f.vx = 0
+            d = f.wander_to - f.x
+            f.face = 1 if d >= 0 else -1
+            if f.st > .7:
+                self.boom(f.x + f.face * 26 * f.sc, f.y - 16 * f.sc, 40, K)
+                # aimed at where he is going; far means flatter and harder
+                f.vx = math.copysign(clamp(abs(d) * 1.15, 420, 1100), d) * K
+                f.vy = -clamp(300 + abs(d) * .45, 520, 820) * K
+                f.vr = f.face * random.uniform(6, 11)
+                f.on_ground = False
+                f.stunt = True
+                f.set_mood("hyped", quiet=random.random() < .4)
+                f.set_state("thrown")
         elif s == "fight":
             foe = f.foe
             if not foe or foe.hp <= 0 or foe.state in ("ko", "grabbed"):
@@ -2874,6 +3388,12 @@ class App:
                 f.face = 1 if d >= 0 else -1
                 reach = REACH[f.plan] * (.4 + .6 * K)
                 if abs(d) > reach - 14:
+                    # a big gap is a travel problem: sometimes he closes it
+                    # on wheels or a jet instead of trudging. Landing puts
+                    # him straight back into the fight -- mode survives.
+                    if abs(d) > 460 and f.on_ground and random.random() < dt * .5 \
+                            and self.joyride(f, dest=foe.x):
+                        return
                     f.vx = approach(f.vx, f.face * 290 * K * f.per["dash"],
                                     1700 * K * dt)
                     if f.on_ground and (foe.y < f.y - 60 or
@@ -2938,7 +3458,7 @@ class App:
                     f.burst -= dt
                     if f.burst <= 0:
                         f.burst = .07
-                        f.aim = math.atan2(self.aim_point(f)[1] - (f.y - 58 * f.sc),
+                        f.aim = math.atan2(self.aim_point(f)[1] - (f.y - 44 * f.sc),
                                            self.aim_point(f)[0] - f.x) + random.uniform(-.06, .06)
                         # Gravity, not lifetime, was what stopped these. He aims
                         # 3 degrees down at the other one's chest, so at the old
@@ -3033,11 +3553,33 @@ class App:
                 f.stun = .8
                 f.set_state("idle")
                 f.goal = self.time + 1.0
-                f.anger = clamp(f.anger + .3 * f.per["grudge"], 0, 1)
-                if f.hp > 0:
-                    f.set_mood("furious" if random.random() < .62 else "sulking")
+                if f.stunt:
+                    # he launched himself; landing is the good part
+                    f.stunt = False
+                    self.puff(f.x, f.y, 4, DUST, K, 10)
+                    if f.hp > 0:
+                        f.set_mood("smug" if random.random() < .6 else "hyped")
+                else:
+                    f.anger = clamp(f.anger + .3 * f.per["grudge"], 0, 1)
+                    if f.hp > 0:
+                        f.set_mood("furious" if random.random() < .62 else "sulking")
+
+        # parachute: the nervous deploy on any long fall (their idea of a
+        # transport is not hitting the ground), the fearless mostly plummet
+        if not f.on_ground and f.vy > 640 * K and not f.chute \
+                and f.state in ("fall", "thrown") and f.y < gy - 220 \
+                and random.random() < dt * (2.2 * f.per["nerve"] + .15):
+            f.chute = True
+            f.vy = min(f.vy, 300 * K)
 
         self.physics(f, dt, gy)
+
+        if f.chute:
+            if f.on_ground or f.state not in ("fall", "thrown"):
+                f.chute = False
+            else:
+                f.vy = min(f.vy, 190 * K)
+                f.vx += math.sin(self.time * 2.2 + f.seedp) * 26 * K * dt
 
         sp = abs(f.vx)
         f.walk += dt * (sp / (22 * K) + (2 if sp > 8 * K else 0))
@@ -3048,7 +3590,8 @@ class App:
     # ==================================================================
     def physics(self, f, dt, gy):
         K = f.K()
-        if f.state in ("zip", "grabbed", "ledge", "sleep"):
+        if f.state in ("zip", "grabbed", "ledge", "sleep",
+                       "float", "ride", "blink", "surf", "jet"):
             if f.state == "sleep":
                 f.vy += 1900 * K * dt
                 f.y = min(gy, f.y + f.vy * dt)
@@ -3217,6 +3760,7 @@ class App:
         for f in self.fighters:
             self.update_fighter(f, dt)
         self.projectiles(dt)
+        self.traps_tick(dt)
         self.fx_tick(dt)
 
     def projectiles(self, dt):
@@ -3240,6 +3784,11 @@ class App:
             elif s["k"] == "rocket":
                 s["spin"] = math.atan2(s["vy"], s["vx"])
                 self.puff(s["x"], s["y"], 1, "#C9D3F0", k * .8, 3)
+            elif s["k"] == "harpoon":
+                s["spin"] = math.atan2(s["vy"], s["vx"])
+            elif s["k"] in ("wballoon", "blackhole", "peel", "spring",
+                            "anvil", "piano"):
+                s["spin"] += dt * (9 if s["k"] in TRAPS else 3)
 
             sx, sy = s["x"], s["y"]
             hit_t = None
@@ -3261,6 +3810,21 @@ class App:
                 if f is s["owner"] or f.hp <= 0:
                     continue
                 if abs(sx - f.x) < 18 * f.sc and f.y - 80 * f.sc < sy < f.y + 8:
+                    if f.state == "attack" and f.weapon == "pan" \
+                            and .1 < f.atk < f.atk_dur \
+                            and (s["vx"] > 0) != (f.face > 0) \
+                            and s["k"] in ("arrow", "laser", "pellet",
+                                           "confetti", "harpoon", "magnet"):
+                        # the pan sends it back where it came from, and it is
+                        # the reflector's round now -- it can hit the shooter
+                        s["vx"] = -s["vx"] * .92
+                        s["vy"] = -abs(s["vy"]) * .4 - 40 * f.K()
+                        s["owner"] = f
+                        s["pierce"], s["tgt"] = True, None
+                        s["life"] = max(s["life"], .8)
+                        self.spark(sx, sy, 6, STEEL, 260, f.K())
+                        self.shake(.08, 3 * f.K())
+                        break
                     hit_f = f
                     break
 
@@ -3271,7 +3835,27 @@ class App:
                 live.append(s)
                 continue
 
-            if s["k"] in ("bomb", "rocket"):
+            if s["k"] == "blackhole":
+                # implodes: everything nearby is pulled IN, icons included --
+                # blast_icons with a negative power walks its push backwards
+                self.booms.append({"x": sx, "y": min(sy, gy), "r": 90 * k,
+                                   "t": 0, "life": .55, "in": True})
+                self.spark(sx, min(sy, gy), 16, "#B79BFF", 300, k)
+                self.shake(.3, 9 * k)
+                rad = 150 * (.5 + .5 * k)
+                self.blast_icons(sx, min(sy, gy), rad * 2.2,
+                                 -70 * (.5 + .5 * k))
+                for cx2, cy2, _hw, _hh, t in bounds:
+                    if (cx2 - sx) ** 2 + (cy2 - sy) ** 2 < rad * rad:
+                        self.hit_target(s["owner"], t, sx, sy)
+                        break
+                for f in self.fighters:
+                    if f is s["owner"] or f.hp <= 0:
+                        continue
+                    if dist(sx, sy, f.x, f.y - 30 * f.sc) < rad:
+                        self.hit_fighter(s["owner"], f, 8)
+                        f.vx = (1 if sx > f.x else -1) * 300 * f.K()
+            elif s["k"] in ("bomb", "rocket"):
                 big = s["k"] == "rocket"
                 self.boom(sx, min(sy, gy), 70 if big else 56, k, big)
                 rad = (150 if big else 110) * (.5 + .5 * k)
@@ -3289,16 +3873,65 @@ class App:
                     if f is not s["owner"] and f.hp > 0 and \
                             dist(sx, sy, f.x, f.y - 30 * f.sc) < rad:
                         self.hit_fighter(s["owner"], f, 26 if big else 18)
+            elif s["k"] in DROPPERS:
+                self.puff(sx, min(sy, gy), 8, DUST, k, 14)
+                self.shake(.22, 8 * k)
+                self.blast_icons(sx, min(sy, gy), 90, 40 * (.5 + .5 * k))
+                if hit_f:
+                    self.hit_fighter(s["owner"], hit_f,
+                                     24 if s["k"] == "anvil" else 20)
+                    hit_f.squash = 1.3          # flattened, cartoon-law
+                elif hit_t:
+                    self.hit_target(s["owner"], hit_t, sx, sy)
+            elif s["k"] in TRAPS:
+                # wherever it stops, it becomes a ground prop and waits
+                lx = clamp(sx, self.ox + 30, self.ox + self.W - 30)
+                self.traps.append({"k": s["k"], "x": lx,
+                                   "y": self.ground_at(lx), "owner": s["owner"],
+                                   "t": 0.0, "life": 26.0, "arm": .4})
+                del self.traps[:-12]      # a floor of peels, not a carpet
+                self.puff(lx, self.ground_at(lx), 2, DUST, k, 6)
+            elif s["k"] == "wballoon":
+                if hit_f:
+                    self.hit_fighter(s["owner"], hit_f, 3)
+                elif hit_t:
+                    self.hit_target(s["owner"], hit_t, sx, sy)
+                self.puff(sx, min(sy, gy), 10, WATER, k, 16)
+                self.spark(sx, min(sy, gy), 8, WATER, 260, k)
+                rad = 90 * (.5 + .5 * k)
+                for f in self.fighters:
+                    # a soaking is not damage, it is a mood
+                    if f is not s["owner"] and f.hp > 0 and \
+                            dist(sx, sy, f.x, f.y - 30 * f.sc) < rad:
+                        f.anger = 0.0
+                        f.set_mood("sulking")
             elif hit_f:
                 self.hit_fighter(s["owner"], hit_f,
-                                 {"arrow": 10, "laser": 13, "pellet": 4}.get(s["k"], 8))
+                                 {"arrow": 10, "laser": 13, "pellet": 4,
+                                  "harpoon": 8, "magnet": 6,
+                                  "confetti": 1}.get(s["k"], 8))
+                if s["k"] == "confetti":
+                    # ammunition is a mood: whatever he was feeling, now he
+                    # is having a wonderful time
+                    hit_f.anger = max(0.0, hit_f.anger - .5)
+                    hit_f.set_mood("hyped")
+                    self.spark(sx, sy, 10, random.choice(CONFETTI_COLS), 240, k)
+                elif s["k"] in PULLERS:
+                    # hit_fighter knocked him away; the whole point of these
+                    # is the opposite, so the pull overrides it
+                    o = s["owner"]
+                    hit_f.vx = (1 if o.x > hit_f.x else -1) * \
+                        (330 if s["k"] == "harpoon" else 240) * hit_f.K()
+                    hit_f.vy = -140 * hit_f.K()
             elif hit_t:
                 self.hit_target(s["owner"], hit_t, sx, sy)
                 self.spark(sx, sy, 8,
                            LASER if s["k"] in ("laser", "pellet") else ROPE, 240, k)
+                if s["k"] == "magnet" and hit_t["kind"] == "icon":
+                    self.yank_icon(hit_t, s["owner"].x)
                 # a bullet knocks one aside rather than clearing the area, and
                 # is throttled so a minigun burst cannot flood Explorer
-                if hit_t["kind"] == "icon" and self.time - self.shove_at > .2:
+                elif hit_t["kind"] == "icon" and self.time - self.shove_at > .2:
                     self.shove_at = self.time
                     self.blast_icons(sx, sy, 76, 30 + 40 * k)
             elif floor:
@@ -3487,9 +4120,30 @@ class App:
             for mon, work in self.mons:
                 self.line((work[0], work[3], work[2], work[3]), "#FF5B47", 2)
 
+        self.layer("trap")
+        for tr in self.traps:
+            tx, ty = tr["x"], tr["y"]
+            if tr["k"] == "peel":
+                self.line((tx - 8, ty - 1, tx - 3, ty - 6, tx + 2, ty - 2,
+                           tx + 8, ty - 6), "#FFE97A", 3)
+            else:
+                zig = [tx - 8, ty]
+                for i in range(4):
+                    zig += [tx - 5 + i * 3.4, ty - (9 if i % 2 == 0 else 4)]
+                zig += [tx + 8, ty]
+                self.line(zig, GUNMETAL, 2)
+                self.line((tx - 10, ty - 11, tx + 10, ty - 11), STEEL, 3)
+
         self.layer("boom")
         for b in self.booms:
             k = b["t"] / b["life"]
+            if b.get("in"):
+                # a blackhole implodes: the ring runs inward and the core
+                # darkens, the reverse of every other bang on the screen
+                self.ring(b["x"], b["y"], max(3, b["r"] * (1.3 - k * 1.15)),
+                          "#B79BFF", max(1, int(5 * (1 - k)) + 1))
+                self.dot(b["x"], b["y"], 7 * (1 - k) + 2, "#1A1030")
+                continue
             self.ring(b["x"], b["y"], b["r"] * (.25 + k * 1.15), FIRE,
                       max(1, int(6 * (1 - k)) + 1))
         self.layer("bolt")
@@ -3537,6 +4191,54 @@ class App:
                           "#D8DEF2", max(3, int(6 * k)))
                 self.layer("shotd")
                 self.dot(s["x"] - dx, s["y"] - dy, max(2, 3.4 * k), FIRE)
+            elif s["k"] == "confetti":
+                self.layer("shotd")
+                self.dot(s["x"], s["y"], max(1.6, 2.6 * k), s.get("col", ROPE))
+            elif s["k"] == "wballoon":
+                self.layer("shotd")
+                self.dot(s["x"], s["y"], max(3, 5.5 * k), WATER)
+                self.dot(s["x"] - 2, s["y"] - 2, max(1, 1.6 * k), "#DFF1FF")
+            elif s["k"] == "harpoon":
+                o = s["owner"]
+                a = s["spin"]
+                dx, dy = math.cos(a) * 10, math.sin(a) * 10
+                self.layer("shot")
+                # the rope back to whoever fired it is the whole joke
+                self.line((o.x + o.face * 20 * o.sc, o.y - 44 * o.sc,
+                           s["x"] - dx, s["y"] - dy), ROPE, 1)
+                self.line((s["x"] - dx, s["y"] - dy, s["x"] + dx, s["y"] + dy),
+                          STEEL, 2)
+                self.layer("shotd")
+                self.dot(s["x"] + dx, s["y"] + dy, 2.4, STEEL)
+            elif s["k"] == "magnet":
+                self.layer("shotd")
+                self.dot(s["x"], s["y"], max(2.4, 4 * k), "#E05A3A")
+                self.dot(s["x"], s["y"], max(1.2, 2 * k), STEEL)
+            elif s["k"] == "blackhole":
+                self.layer("shotd")
+                self.dot(s["x"], s["y"], max(3, 5 * k), "#1A1030")
+                self.layer("shot")
+                self.ring(s["x"], s["y"], max(4, 7 * k), "#B79BFF", 1)
+            elif s["k"] in ("anvil", "piano"):
+                self.layer("shot")
+                gy2 = self.ground_at(s["x"])
+                # the landing spot telegraphs itself; the dread is the point
+                self.ring(s["x"], gy2 - 4, 10 + 8 * k, "#8FA0CC", 2)
+                x, y = s["x"], s["y"]
+                if s["k"] == "anvil":
+                    self.box(x - 9 * k - 2, y - 7 * k, x + 9 * k + 2, y, "#39415F")
+                    self.box(x - 5 * k, y - 12 * k, x + 5 * k, y - 7 * k, "#39415F")
+                else:
+                    self.box(x - 12 * k - 2, y - 10 * k, x + 12 * k + 2, y, "#20263F")
+                    self.box(x - 12 * k - 2, y - 3 * k, x + 12 * k + 2, y, "#E6ECFF")
+            elif s["k"] in ("peel", "spring"):
+                self.layer("shotd")
+                col = "#FFE97A" if s["k"] == "peel" else GUNMETAL
+                a = s["spin"]
+                dx, dy = math.cos(a) * 5, math.sin(a) * 5
+                self.layer("shot")
+                self.line((s["x"] - dx, s["y"] - dy, s["x"] + dx, s["y"] + dy),
+                          col, 3)
             else:
                 self.layer("shotd")
                 self.dot(s["x"], s["y"], max(3, 5 * k), BOMBC)
@@ -3628,6 +4330,43 @@ class App:
             fR = (math.cos(ph + math.pi) * stride, -max(0, math.sin(ph + math.pi)) * 7)
             py, lean = -30 - abs(bob) * .4, -.06
             hL, hR = (-6, -74), (7, -76)
+        elif st == "blink":
+            k2 = clamp(f.st / .5, 0, 1)
+            py, lean = -24 - 8 * math.sin(k2 * math.pi), 0.0
+            fL, fR = (-6, 0), (6, 0)
+            hL, hR = (-14, -30 - 22 * k2), (14, -30 - 22 * k2)
+        elif st == "float":
+            k2 = math.sin(self.time * 2 + f.seedp)
+            py, lean = -32, .04
+            fL, fR = (-4 + k2 * 2, 6), (7, 10 - k2 * 2)   # legs dangle
+            hL, hR = (-8, -40), (7, -84)                  # one hand on the string
+        elif st == "pogo":
+            c = 1 if f.on_ground else 0
+            py = -26 - (0 if c else 6)
+            fL, fR = (-3, -6 + c * 6), (5, -6 + c * 6)
+            hL, hR = (-9, -52), (11, -52)                 # both hands on the bar
+        elif st == "skate":
+            py, lean = -30, .26
+            k2 = math.sin(ph)
+            fL = (-8, -2)
+            fR = (10 + (k2 * 6 if f.on_ground else 0), -2)
+            hL, hR = (-16, -44), (10, -50)
+        elif st == "jet":
+            py, lean = -32, .34                           # leaning into it
+            fL, fR = (-10, 2), (-4, 5)                    # legs trailing
+            hL, hR = (-14, -34), (16, -56)                # one fist forward
+        elif st == "surf":
+            py, lean = -28, .18
+            fL, fR = (-11, -1), (11, -2)
+            hL, hR = (-18, -46), (16, -52)                # arms out for balance
+        elif st == "ride":
+            py = -26
+            fL, fR = (8, -12), (12, -8)                   # sat up top, legs forward
+            hL, hR = (-6, -50), (8, -52)
+        elif st == "cannonwind":
+            py, lean = -18, .1
+            fL, fR = (-4, -2), (8, -8)
+            hL, hR = (-8, -34), (12, -40)
         elif st in ("walk", "hunt", "fight"):
             run = abs(f.vx) > 210 * K
             # The walk is temperament too: dash lengthens the stride, hops
@@ -3691,7 +4430,7 @@ class App:
             py, lean = -30, .12
             fL, fR = (-12, 0), (14, 0)
             w = f.weapon
-            if w == "sword":
+            if w in ("sword", "fish", "pan"):
                 sw = lerp(-2.2, -2.6, k / .55) if k < .55 else lerp(-2.6, .9, (k - .55) / .45)
                 hR = (math.cos(sw) * 30 + 8, math.sin(sw) * 30 - 48)
                 hL = (-14, -44)
@@ -3706,7 +4445,7 @@ class App:
                 hL = (math.cos(aimL) * 33 + 4, -45 + math.sin(aimL) * 33)
                 hR = (math.cos(aimL) * (19 - draw * 13) + 4,
                       -45 + math.sin(aimL) * (19 - draw * 13))
-            elif w in ("blaster", "lightning"):
+            elif w in ("blaster", "lightning", "confetti", "harpoon", "magnet"):
                 kick = -7 if .55 < k < .7 else 0
                 hR = (math.cos(aimL) * (35 + kick) + 4, -44 + math.sin(aimL) * (35 + kick))
                 hL = (math.cos(aimL) * 20 - 3, -42 + math.sin(aimL) * 20)
@@ -3798,6 +4537,49 @@ class App:
         self.layer(ta)
         self.line((*P(neck[0], neck[1] - 1), *P(*elbR), *P(*hR)), dark, lw)
         self.draw_weapon(f, P, hR, elbR, hL, tw, twd)
+
+        # ride props. Drawn after the weapon so nothing here can shuffle the
+        # limb items the geometry checks read by position in the pool.
+        if st == "pogo":
+            self.layer(tw)
+            self.line((*P(1, -22), *P(1, 10)), GUNMETAL, max(2, round(3 * S)))
+            self.line((*P(-7, -22), *P(9, -22)), STEEL, max(2, round(3 * S)))
+            self.line((*P(-4, 10), *P(6, 10)), STEEL, max(2, round(3 * S)))
+        elif st == "skate":
+            self.layer(tw)
+            self.line((*P(-15, 3), *P(17, 3)), WOOD, max(2, round(4 * S)))
+            self.layer(twd)
+            self.dot(*P(-9, 6), max(1.4, 2.6 * S), "#39415F")
+            self.dot(*P(11, 6), max(1.4, 2.6 * S), "#39415F")
+        elif st == "float":
+            self.layer(tw)
+            self.line((*P(hR[0], hR[1]), *P(9, -98)), ROPE, 1)
+            self.layer(twd)
+            self.dot(*P(9, -112), 13 * S, col)
+            self.dot(*P(5, -117), 3 * S, "#FFFFFF")
+        elif st == "cannonwind":
+            self.layer(tw)
+            self.line((*P(4, 2), *P(30, -18)), "#5C6690", max(6, round(11 * S)))
+            self.layer(twd)
+            self.dot(*P(8, 4), max(3, 6 * S), "#39415F")
+        elif st == "jet":
+            # the pack rides his back -- local -x, whichever way he faces
+            self.layer(tw)
+            self.line((*P(-11, -56), *P(-11, -36)), GUNMETAL, max(3, round(5 * S)))
+            self.line((*P(-16, -54), *P(-16, -38)), "#7E8AB4", max(2, round(4 * S)))
+            self.layer(twd)
+            fl = 1 + (int(self.time * 30) % 2)            # flame flicker
+            self.dot(*P(-11, -32 + fl), max(1.6, 3 * S), FIRE)
+            self.dot(*P(-16, -34 + fl), max(1.2, 2.2 * S), "#FFE7A8")
+        if f.chute:
+            self.layer(tw)
+            pts = []
+            for i in range(5):
+                a2 = math.pi + i * math.pi / 4
+                pts += list(P(math.cos(a2) * 26, -96 + math.sin(a2) * 16))
+            self.line(pts, ROPE, max(2, round(3 * S)))
+            self.line((*P(-26, -96), *P(-9, -50)), ROPE, 1)
+            self.line((*P(26, -96), *P(9, -50)), ROPE, 1)
 
     def draw_face(self, f, cx, cy, e, tilt):
         lookx = f.look * 2.2
@@ -3911,6 +4693,50 @@ class App:
             self.line((*rel(4, 3), *rel(26, 3)), "#6B769C", max(1, round(2.4 * S)))
             self.layer(twd)
             self.dot(rel(26, 0)[0], rel(26, 0)[1] + spin, max(1.4, 2.6 * S), FIRE)
+        elif w == "fish":
+            self.line((*rel(0, 0), *rel(14, -3), *rel(28, 0), *rel(38, -4)),
+                      "#8FD0E8", max(3, round(6 * S)))
+            self.line((*rel(38, -8), *rel(44, -4), *rel(38, 2)),
+                      "#8FD0E8", max(2, round(3 * S)))
+            self.layer(twd)
+            self.dot(*rel(7, -2), max(1, 1.8 * S), "#0A0A0C")
+        elif w == "pan":
+            self.line((*rel(0, 0), *rel(16, 0)), GUNMETAL, max(2, round(3.4 * S)))
+            self.layer(twd)
+            self.dot(*rel(24, 0), max(4, 8 * S), "#3A4468")
+        elif w == "confetti":
+            self.line((*rel(-2, 0), *rel(16, -4)), "#C89A66", max(3, round(6 * S)))
+            self.line((*rel(-2, 0), *rel(16, 4)), "#B0854F", max(3, round(6 * S)))
+            self.layer(twd)
+            for i, col in enumerate(CONFETTI_COLS[:3]):
+                self.dot(*rel(19 + i * 3, -4 + i * 4), max(1, 1.8 * S), col)
+        elif w == "harpoon":
+            self.line((*rel(-8, 0), *rel(34, 0)), STEEL, max(2, round(3 * S)))
+            self.line((*rel(34, 0), *rel(28, -5)), STEEL, max(1, round(2 * S)))
+            self.line((*rel(34, 0), *rel(28, 5)), STEEL, max(1, round(2 * S)))
+            self.layer(twd)
+            self.dot(*rel(-8, 2), max(1.5, 3 * S), ROPE)
+        elif w == "magnet":
+            self.line((*rel(2, -5), *rel(14, -5)), "#E05A3A", max(2, round(4 * S)))
+            self.line((*rel(2, 5), *rel(14, 5)), "#E05A3A", max(2, round(4 * S)))
+            self.line((*rel(2, -5), *rel(-4, 0), *rel(2, 5)), "#B44A30",
+                      max(2, round(4 * S)))
+            self.layer(twd)
+            self.dot(*rel(14, -5), max(1.2, 2.4 * S), STEEL)
+            self.dot(*rel(14, 5), max(1.2, 2.4 * S), STEEL)
+        elif w == "blackhole":
+            self.layer(twd)
+            self.dot(*rel(12, 0), max(2.5, 6 * S), "#1A1030")
+            self.ring(*rel(12, 0), max(4, 8.5 * S), "#B79BFF", max(1, round(1.6 * S)))
+        elif w in ("anvil", "piano"):
+            # nothing in hand: he calls it down, and the pointing IS the prop
+            self.line((*rel(0, 0), *rel(20, -12)), GUNMETAL, max(2, round(3 * S)))
+        elif w == "peel":
+            self.layer(twd)
+            self.dot(*rel(10, 0), max(2, 4 * S), "#FFE97A")
+        elif w == "spring":
+            self.line((*rel(4, 3), *rel(8, -3), *rel(12, 3), *rel(16, -3)),
+                      GUNMETAL, max(1, round(2 * S)))
         else:  # bomb
             self.layer(twd)
             self.dot(*rel(12, 0), max(2.5, 6.2 * S), BOMBC)

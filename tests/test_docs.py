@@ -62,11 +62,11 @@ for label in labels:
         bad.append("README does not mention the tray item %r" % label)
 
 # --- the weapons -----------------------------------------------------------
+# every WEAPONS key must appear in the README as-is ("peel" is satisfied by
+# "banana peel", "pan" by "frying pan"); a hardcoded name map here went stale
+# the day the arsenal grew
 for w in gm.WEAPONS:
-    shown = {"blaster": "blaster", "minigun": "minigun", "rocket": "rocket",
-             "lightning": "lightning", "sword": "sword", "bow": "bow",
-             "bomb": "bomb", "chainsaw": "chainsaw"}[w]
-    if shown not in flat:
+    if w not in flat:
         bad.append("README does not mention the %s" % w)
 
 # --- the cast --------------------------------------------------------------

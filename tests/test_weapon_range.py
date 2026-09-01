@@ -50,9 +50,10 @@ a, b = app.fighters
 GROUND = app.ground_at(900)
 SCALE = .4 + .6 * a.K()
 
-FLAT = ("blaster", "minigun", "rocket")
-LOBBED = ("bow", "bomb")
-INSTANT = ("sword", "chainsaw", "lightning")
+FLAT = ("blaster", "minigun", "rocket", "confetti", "harpoon", "magnet")
+LOBBED = ("bow", "bomb", "balloon", "blackhole")
+INSTANT = ("sword", "chainsaw", "lightning", "fish", "pan")
+DROPPED = ("anvil", "piano")          # from the sky; only connection matters
 MARGIN = 1.5                    # a flat round must outrun the gap by this much
 SAMPLES = 5                     # the minigun sprays; one sample is noise
 bad = []
@@ -174,7 +175,7 @@ print("scale %.2f, so the AI opens fire at REACH x %.2f"
 print("")
 print("%-10s %7s  %-22s %s" % ("weapon", "fires@", "against a standing target",
                                "with icons between"))
-for w in INSTANT + LOBBED + FLAT:
+for w in INSTANT + LOBBED + FLAT + DROPPED:
     reach = gm.REACH[w] * SCALE
     clean, _ = connects(w, reach, False)
     dirty, ic = connects(w, reach, True)
@@ -254,6 +255,157 @@ for kind in ("cursor", "window"):
     if not good_off:
         bad.append("%s shot with shots_over_icons off: %s" % (kind, off or "none"))
 gm.CFG["shots_over_icons"] = True
+
+# --- 1c. the novelty arsenal actually does its tricks ----------------------
+# Each of these is the weapon's one defining behaviour, driven through the
+# real attack path: joy as ammunition, the soaking, the reel-in, the placed
+# trap springing, and the pan sending a round back.
+
+
+def novelty(weapon):
+    set_terrain(False)
+    random.seed(11)
+    square_up(weapon, gm.REACH[weapon] * SCALE)
+
+
+novelty("confetti")
+b.mood, b.anger = "bored", .9
+for _ in range(240):
+    app.update_fighter(a, 1 / 40.0)
+    app.projectiles(1 / 40.0)
+    if b.mood == "hyped":
+        break
+print("")
+print("confetti              : victim mood %r, anger %.2f" % (b.mood, b.anger))
+if b.mood != "hyped" or b.anger > .5:
+    bad.append("confetti did not weaponise joy (mood %s, anger %.2f)"
+               % (b.mood, b.anger))
+
+novelty("balloon")
+b.mood, b.anger = "furious", 1.0
+for _ in range(240):
+    app.update_fighter(a, 1 / 40.0)
+    app.projectiles(1 / 40.0)
+    if b.mood == "sulking":
+        break
+print("water balloon         : victim mood %r, anger %.2f" % (b.mood, b.anger))
+if b.mood != "sulking" or b.anger != 0.0:
+    bad.append("the soaking did not take (mood %s, anger %.2f)"
+               % (b.mood, b.anger))
+
+novelty("harpoon")
+hits = []
+real_hit = app.hit_fighter
+app.hit_fighter = lambda att, vic, d: (hits.append(1), real_hit(att, vic, d))[1]
+for _ in range(240):
+    app.update_fighter(a, 1 / 40.0)
+    app.projectiles(1 / 40.0)
+    if hits:
+        break
+app.hit_fighter = real_hit
+print("harpoon               : hit=%s victim vx %.0f (negative = reeled in)"
+      % (bool(hits), b.vx))
+if not hits or b.vx >= 0:
+    bad.append("harpoon did not reel the target in (vx %.0f)" % b.vx)
+
+for w, springs in (("peel", False), ("spring", True)):
+    novelty(w)
+    app.traps = []
+    for _ in range(240):
+        app.update_fighter(a, 1 / 40.0)
+        app.projectiles(1 / 40.0)
+        if app.traps:
+            break
+    if not app.traps:
+        bad.append("%s never landed as a trap" % w)
+        print("%-22s: never placed" % w)
+        continue
+    tr = app.traps[0]
+    b.x, b.y = tr["x"], tr["y"]
+    b.vx, b.vy, b.on_ground, b.hp = 60.0, 0.0, True, 100.0
+    b.state = "walk"
+    tr["arm"] = 0.0
+    for _ in range(40):
+        app.traps_tick(1 / 40.0)
+        if b.state in ("thrown", "jump"):
+            break
+    if springs:
+        # the launch speed scales with body size, so the bar does too
+        ok2 = b.state == "jump" and b.vy < -1100 * b.K()
+        print("springboard           : state %r vy %.0f" % (b.state, b.vy))
+    else:
+        ok2 = b.state == "thrown"
+        print("banana peel           : state %r (slipped=%s)" % (b.state, ok2))
+    if not ok2:
+        bad.append("%s placed but never sprang (state %s)" % (w, b.state))
+
+# the pan sends a round back where it came from, owned by the reflector
+set_terrain(False)
+b.x, b.y = 500.0, GROUND
+b.hp, b.face = 100.0, -1
+b.state, b.weapon, b.atk, b.atk_dur = "attack", "pan", .2, .5
+app.shots = [{"k": "laser", "x": b.x - 60, "y": b.y - 40, "owner": a,
+              "vx": 600.0, "vy": 0.0, "g": 0.0, "life": 1.0,
+              "trail": [], "spin": 0.0}]
+refl = False
+for _ in range(30):
+    app.projectiles(1 / 40.0)
+    if app.shots and app.shots[0]["owner"] is b and app.shots[0]["vx"] < 0:
+        refl = True
+        break
+    if not app.shots:
+        break
+print("frying pan            : reflected=%s" % refl)
+if not refl:
+    bad.append("the pan did not reflect an incoming round")
+b.state = "idle"
+
+# --- 1d. rounds leave from the drawn weapon, not from above it --------------
+# Reads the weapon back off the canvas rather than re-deriving the pose: the
+# muzzle spent a whole release spawning every shot ~10px above every gun,
+# because muzzle() fired from the shoulder while the poses hold the weapon at
+# the hand. Self-consistent maths, describing the wrong point.
+
+
+def muzzle_gap(w):
+    """Distance from the spawned round to the forward-most drawn point of
+    the weapon -- the tip, since he faces +1 here. Hand-spawn and
+    shoulder-spawn both fail this; only tip-spawn passes."""
+    set_terrain(False)
+    shot, _ = fire(w, gm.REACH[w] * SCALE, 77)
+    if shot is None:
+        return None
+    app._frame_begin()
+    app.sx = app.sy = 0.0
+    app.draw_fighter(a, 0)
+    app._frame_end()
+    pts = []
+    for kind2 in ("line", "oval"):
+        for tag in (app._ftag[0][4], app._ftag[0][5]):
+            for it in app._pool.get(tag, {}).get(kind2, ()):
+                if app.canvas.itemcget(it, "state") == "hidden":
+                    continue
+                co = app.canvas.coords(it)
+                pts += [(co[i] + app.ox, co[i + 1] + app.oy)
+                        for i in range(0, len(co), 2)]
+    if not pts:
+        return None
+    tipx, tipy = max(pts)                 # forward-most drawn point
+    return gm.dist(shot["x"], shot["y"], tipx, tipy)
+
+
+print("")
+for w in ("blaster", "minigun", "rocket", "harpoon"):
+    got = muzzle_gap(w)
+    if got is None:
+        bad.append("%s: no shot or no drawn weapon to measure" % w)
+        continue
+    print("muzzle vs weapon tip  : %-8s %.1fpx" % (w, got))
+    # 7px is the calibrated fit (max measured 4.9); a hand-spawn misses by
+    # 13-23px and the old shoulder-spawn by 26-32px, so both fail loudly
+    if got > 7:
+        bad.append("%s fires %.0fpx away from the tip of its drawn weapon"
+                   % (w, got))
 
 # --- 2. how much road a flat round has left past that distance -------------
 set_terrain(False)

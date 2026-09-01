@@ -150,6 +150,7 @@ DEFAULTS = {
     "chaos": 1.0,             # how fast they escalate
     "crowd": 2,               # how many of them, 1 to 10
     "move_icons": False,      # let them physically drag your desktop icons (opt-in)
+    "shots_over_icons": True, # stray fire passes over icons instead of into them
     "react_to_windows": True, # comment on real window titles, follow focus
     "sleep_when_idle": True,
     "idle_minutes": 5.0,
@@ -178,8 +179,8 @@ def load_settings():
         s["crowd"] = int(min(max(int(s["crowd"]), 1), len(ROSTER)))
     except Exception:
         return dict(DEFAULTS)
-    for k in ("move_icons", "react_to_windows", "sleep_when_idle",
-              "all_monitors", "start_with_windows"):
+    for k in ("move_icons", "shots_over_icons", "react_to_windows",
+              "sleep_when_idle", "all_monitors", "start_with_windows"):
         s[k] = bool(s[k])
     return s
 
@@ -1060,6 +1061,7 @@ class SettingsWindow:
             self.vars["move_icons"].set(False)
             drag.config(state="disabled", disabledforeground="#6C7BB0",
                         text="Drag my desktop icons  (no layout backup — off)")
+        check("shots_over_icons", "Stray shots fly over my icons  (aimed fire still hits)")
         check("all_monitors", "Use all monitors  (restart to apply)")
         check("start_with_windows", "Start with Windows")
 
@@ -1869,6 +1871,8 @@ class Fighter:
         self.ledge_cd = 0.0        # no re-grabbing the lip he just left
         self.out = 0.0             # how long he has been out of sight
         self.at_foe = False        # this shot is meant for the other one
+        self.shot_pierce = False   # this shot flies over the desktop
+        self.shot_tgt = None       # ...except this (kind, key), which it may hit
         self.squash = 0.0          # >0 land squash, <0 stretch
         self.carry = None          # (icon index, dx, dy offset to list coords)
         self.carry_t = 0.0
@@ -2463,8 +2467,20 @@ class App:
         else:
             f.weapon = f.plan
         # Shots meant for the other one ignore the desktop on the way past;
-        # otherwise a row of icons between them soaks up every round.
+        # otherwise a row of icons between them soaks up every round. With
+        # shots_over_icons on, fire at the cursor or at a picked target gets
+        # the same treatment -- but an aimed round has to carry WHICH target
+        # it is for, or the pierce would carry it through the very window it
+        # was fired at.
         f.at_foe = bool(foe and f.foe)
+        f.shot_pierce = f.at_foe
+        f.shot_tgt = None
+        if not f.at_foe and CFG["shots_over_icons"]:
+            if at is not None:
+                f.shot_pierce = True
+            elif f.target is not None:
+                f.shot_pierce = True
+                f.shot_tgt = (f.target["kind"], f.target["key"])
         if f.weapon == "bow":
             k = f.K()
             ang = lob_angle(cx - f.x, cy - (f.y - 58 * f.sc), 720 * k, 420 * k)
@@ -2486,7 +2502,7 @@ class App:
         s = {"k": kind, "x": hx, "y": hy, "owner": f,
              "vx": math.cos(f.aim) * speed * k, "vy": math.sin(f.aim) * speed * k,
              "g": grav * k, "life": life, "trail": [], "spin": 0.0,
-             "pierce": f.at_foe}
+             "pierce": f.shot_pierce, "tgt": f.shot_tgt}
         if extra:
             s.update(extra)
         self.shots.append(s)
@@ -2511,7 +2527,8 @@ class App:
                                "vx": math.cos(f.aim) * 430 * k,
                                "vy": math.sin(f.aim) * 430 * k - 240 * k,
                                "g": 900 * k, "life": 2.2, "trail": [],
-                               "spin": 0.0, "pierce": f.at_foe})
+                               "spin": 0.0, "pierce": f.shot_pierce,
+                               "tgt": f.shot_tgt})
         elif w == "rocket":
             # Same disease the minigun had: gravity, not lifetime, was
             # what stopped these. Aimed three degrees down from a muzzle
@@ -3226,9 +3243,17 @@ class App:
 
             sx, sy = s["x"], s["y"]
             hit_t = None
+            tgt = s.get("tgt")
             if not s.get("pierce"):
                 for cx, cy, hw, hh, t in bounds:
                     if -hw < sx - cx < hw and -hh < sy - cy < hh:
+                        hit_t = t
+                        break
+            elif tgt is not None:
+                # piercing, but aimed: the one thing it may still hit
+                for cx, cy, hw, hh, t in bounds:
+                    if (t["kind"], t["key"]) == tgt and -hw < sx - cx < hw \
+                            and -hh < sy - cy < hh:
                         hit_t = t
                         break
             hit_f = None

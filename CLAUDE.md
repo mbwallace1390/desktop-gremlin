@@ -163,8 +163,14 @@ the fight state still gets a chance to close the new distance.
 
 **Shots meant for the other fighter pass over the desktop.** `f.at_foe` is set
 in `start_attack` and becomes `pierce` on the projectile. Without it a row of
-icons between them soaks up every round. Shots aimed *at* an icon still hit it,
-and blast radius still catches icons either way.
+icons between them soaks up every round. Under `shots_over_icons` (default on)
+cursor fire and aimed fire pierce too — but an aimed round must carry its
+target as `tgt`, the one thing it may still hit, or the pierce carries it
+through the very window it was fired at. Shots aimed *at* an icon still hit it,
+and blast radius still catches icons either way. The wall in
+`tests/test_weapon_range.py` used to stand at x=700 while every duel happened
+by x=554 — a green column that intercepted nothing — so move the wall, not the
+fighters, when the geometry changes.
 
 **Adding a line they can say is one table edit.** `VOICES[kind][event]`, and
 `f.yell("event")` at the site. All ten must carry the same 34 event keys, and

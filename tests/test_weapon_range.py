@@ -58,15 +58,23 @@ SAMPLES = 5                     # the minigun sprays; one sample is noise
 bad = []
 
 
-def set_terrain(with_icons):
-    """Optionally a row of icons standing between them, at their own height."""
+def set_terrain(with_icons, window=None):
+    """Optionally a row of icons standing between them, at their own height.
+
+    The shooter stands at x=200 and no firing distance here puts the target
+    past x=560, so the wall runs 260..560: genuinely in the corridor. The
+    first version of this wall stood at x=700 -- behind every target -- and
+    its 'with icons between' column passed green while intercepting nothing.
+    """
     t = app.terrain
     icons = []
     if with_icons:
-        for i in range(6):
-            x = 700 + i * 120
+        x, i = 260, 0
+        while x < 560:
             icons.append(("Icon %d" % i, x, int(GROUND) - 80, x + 64,
                           int(GROUND) - 16, i))
+            x += 80
+            i += 1
     t.icons, t.windows, t.moved, t.win_pos = icons, [], {}, {}
     t.icons_ok = bool(icons)
     tg, pl = [], []
@@ -75,6 +83,13 @@ def set_terrain(with_icons):
                    "name": name, "w": r - l, "h": bo - tp,
                    "kind": "icon", "key": idx})
         pl.append((l, r, tp, "icon", idx))
+    if window:
+        wl, wt, wr, wb, hwnd = window
+        t.windows = [("Probe", wl, wt, wr, wb, hwnd)]
+        tg.append({"cx": (wl + wr) / 2, "cy": wt + 16, "top": wt,
+                   "name": "Probe", "w": wr - wl, "h": 32,
+                   "kind": "window", "key": hwnd})
+        pl.append((wl + 6, wr - 6, wt, "window", hwnd))
     t._targets, t.platforms = tg, pl
     t.bounds = [(x["cx"], x["cy"], x["w"] / 2, max(x["h"], 26) / 2, x)
                 for x in tg]
@@ -170,6 +185,75 @@ for w in INSTANT + LOBBED + FLAT:
     if not dirty and ic:
         bad.append("%s is stopped by a desktop icon" % w)
     print("%-10s %7.0f  %-22s %s" % (w, reach, note, dnote))
+
+# --- 1b. stray fire: cursor shots and window shots against the same wall ----
+# Both used to be soaked by whatever icon stood first in the corridor -- only
+# fighter-vs-fighter fire carried pierce. shots_over_icons (default on) lets
+# them over too; an aimed round still hits the one thing it was fired at, and
+# turning the setting off must bring the old cover behaviour back.
+
+
+def stray(kind, over, seed=5):
+    """Fire a blaster at the cursor, or at a window, through the wall."""
+    gm.CFG["shots_over_icons"] = over
+    window = (700, int(GROUND) - 60, 1100, int(GROUND), 4242) \
+        if kind == "window" else None
+    set_terrain(True, window=window)
+    random.seed(seed)
+    a.x, a.y = 200.0, GROUND
+    a.vx = a.vy = 0.0
+    a.on_ground, a.hp, a.stun = True, 100.0, 0.0
+    a.tumble = a.squash = 0.0
+    a.carry, a.foe, a.mode = None, None, "roam"
+    a.face = 1
+    b.x = 99999.0
+    app.shots = []
+    hits = []
+    real_t = app.hit_target
+    app.hit_target = lambda f, t, x, y: (hits.append(t.get("kind")),
+                                         real_t(f, t, x, y))[1]
+    if kind == "window":
+        a.target = [t for t in app.terrain.targets() if t["kind"] == "window"][0]
+        a.plan = "blaster"
+        real_r = random.random
+        random.random = lambda: 0.0            # start_attack keeps the plan
+        app.start_attack(a)
+        random.random = real_r
+    else:
+        a.target = None
+        real_c = random.choice
+        random.choice = lambda seq: "blaster" if "blaster" in seq else real_c(seq)
+        app.start_attack(a, at=(830.0, GROUND - 40))
+        random.choice = real_c
+    assert a.weapon == "blaster", a.weapon
+    for _ in range(400):
+        app.update_fighter(a, 1 / 40.0)
+        app.projectiles(1 / 40.0)
+        if hits or (a.state != "attack" and not app.shots):
+            break
+    app.hit_target = real_t
+    return hits
+
+
+print("")
+print("%-24s %-14s %s" % ("stray fire", "setting on", "setting off"))
+for kind in ("cursor", "window"):
+    on, off = stray(kind, True), stray(kind, False)
+    if kind == "cursor":
+        good_on, good_off = not on, "icon" in off
+        want_on = "flies over" if good_on else "EATEN: %s" % on
+        want_off = "blocked" if good_off else "NOT BLOCKED: %s" % off
+    else:
+        good_on = bool(on) and on[0] == "window"
+        good_off = bool(off) and off[0] == "icon"
+        want_on = "hits the window" if good_on else "WRONG: %s" % on
+        want_off = "icon takes it" if good_off else "WRONG: %s" % off
+    print("%-24s %-14s %s" % (kind, want_on, want_off))
+    if not good_on:
+        bad.append("%s shot with shots_over_icons on: %s" % (kind, on or "none"))
+    if not good_off:
+        bad.append("%s shot with shots_over_icons off: %s" % (kind, off or "none"))
+gm.CFG["shots_over_icons"] = True
 
 # --- 2. how much road a flat round has left past that distance -------------
 set_terrain(False)

@@ -74,9 +74,13 @@ across the desktop and drops it somewhere else — and your icon is genuinely
 there now. Not an animation of an icon. The icon.
 
 Explosions move them too. A bomb or a rocket landing in a cluster shoves every
-icon in the blast outward, hardest for whatever was closest; a stray bullet
-knocks a single icon aside. All of it is clamped to the visible desktop, and all
-of it is undone by **Restore my icon layout**.
+icon in the blast outward, hardest for whatever was closest; a bullet that
+strikes an icon knocks it aside. By default stray fire — shots meant for
+another fighter, your cursor, or a window — passes over the desktop rather
+than being soaked up by whatever icon stood in the way; turn
+`shots_over_icons` off if you want the icons to serve as cover. All of it is
+clamped to the visible desktop, and all of it is undone by **Restore my icon
+layout**.
 
 **The undo:** your layout is written to `gremlin_icon_backup.json` the first
 time you ever run this. **Tray → Restore my icon layout** puts every icon back.
@@ -217,6 +221,7 @@ All of them sit next to the script, and every one is safe to delete.
 | `chaos` | `1.0` | how fast they escalate; scales icon-stealing too |
 | `crowd` | `2` | how many of them, 1 to 10 |
 | `move_icons` | `false` | let them physically drag your icons |
+| `shots_over_icons` | `true` | stray fire passes over icons; aimed fire and blasts still land |
 | `react_to_windows` | `true` | comment on window titles, follow focus |
 | `sleep_when_idle` | `true` | |
 | `idle_minutes` | `5.0` | |

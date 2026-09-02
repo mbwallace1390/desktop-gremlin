@@ -1,7 +1,7 @@
 # Desktop Gremlin
 
 One to ten stick figures living on top of the real Windows desktop. One file,
-`desktop_gremlin.py`, ~3900 lines, tkinter + pywin32, no other dependencies.
+`desktop_gremlin.py`, ~5400 lines, tkinter + pywin32, no other dependencies.
 Windows only — it talks to the Explorer shell directly.
 
 ## Verify before believing it works
@@ -10,10 +10,21 @@ Windows only — it talks to the Explorer shell directly.
 python tests\run_all.py
 ```
 
-Fifteen checks, a few seconds, nothing to install. Each one encodes a bug that
+Sixteen checks, a few seconds, nothing to install. Each one encodes a bug that
 actually shipped. They build a real Tk window and a real `App`, so windows
 flash on screen while they run; none of them touch your desktop icons, because
-the shell is stubbed out.
+the shell is stubbed out. `.github/workflows/checks.yml` runs the same command
+on every push, on a Windows runner.
+
+**Every check starts through `tests/harness.py`.** `harness.load(tag)` imports
+the script and redirects all four files it persists to — settings, icon
+backup, memory, log — into `tests/.tmp` before anything can write, then
+`build()` makes the App and `fake_terrain()` serves a desktop. Do not open a
+new check with a hand-rolled `importlib` preamble: the redirect is the part
+that gets forgotten, and forgetting it writes a real settings file into the
+repo (see below). `tests/test_runtime.py` is the model for a check that needs
+the frame loop itself: it captures `root.after`, replays the ticks against a
+fake clock, and drives the real `run()`.
 
 **This is the mechanism, not a suggestion.** Every bug listed further down was
 found by measurement and would have been missed by reading the code — several
@@ -65,9 +76,43 @@ because the bug only ever existed at import time.
 so exercising it from a check drops a `gremlin_settings.json` into the repo
 carrying whatever that check had forced — and the app then starts with those
 values. This happened twice in one session, the second time after being caught
-by the first. Point `SETTINGS_PATH` at `tests/.tmp` before calling `apply()`, or
-do not call it. The same applies to `MEMORY_PATH` and `LOG_PATH`, which every
-check already redirects.
+by the first. `harness.load()` now redirects `SETTINGS_PATH`, `BACKUP_PATH`,
+`MEMORY_PATH` and `LOG_PATH` before a check can do anything else; that is the
+mechanism, and the reason a check must start there. `set_run_at_startup()`
+still writes a real Run key, so do not call `apply()` at all.
+
+**The shell is read on a thread, and every primitive takes the lock.**
+`Terrain.refresh()` only *asks* once `threaded` is set; `Scanner` does the
+reading and `Terrain.poll()`, called every frame, takes the result in. The
+scanner shares `SHELL` — and its one remote buffer in Explorer — with the frame
+thread's icon writes, so `ShellView`'s primitives are `@_locked` per call: a
+write landing between another call's write and its read would hand Explorer
+the wrong struct. Per call and not per scan, so a carry waits for one message
+and never for four hundred. `App.__init__` takes the one synchronous look, and
+the checks stub `refresh` wholesale, which is why none of them see the thread.
+
+**Our own overlay trips the shell's fullscreen flag.**
+`SHQueryUserNotificationState` reports BUSY the moment a fullscreen window
+appears, ours included — measured, not guessed — so `fullscreen_app()` judges
+the *foreground* window's frame against its monitor instead. We are never
+foreground (`WS_EX_NOACTIVATE`), a maximised window stops at the work area,
+and the shell's own windows are skipped by class. Holding withdraws the
+window: `withdraw()`/`deiconify()` keeps the HWND, the extended styles and
+the transparent colour (also measured), and a topmost layered window merely
+left transparent is still composited over a borderless game every frame.
+
+**The loop is paced from a deadline.** `after(period)` at the end of a frame
+adds the frame's own cost to every gap: 40 configured ran at 31.7 with ten on
+screen, and 39.9 after. `frame_period()` is also where asleep, battery and
+held slow the tick; the `dt` cap follows it, or a 100 ms tick would run the
+simulation at half speed.
+
+**The icon backup is re-taken every launch, unless the last run left icons
+moved.** `set_item_pos` flags the file (`dirty`) on the first real move of a
+run, `restore_layout` clears it, and `backup_layout` keeps the old snapshot
+while the flag stands — that copy is the only good one. A restore's own writes
+go through `_restoring` so they do not re-flag it. `first` and `previous` in
+the file are for hand recovery and on no menu.
 
 **Two coordinate systems.** `item_rect` returns screen pixels, `item_pos` and
 `SETITEMPOSITION32` want listview coordinates. They differ by a constant for
@@ -82,8 +127,16 @@ before diagnosing anything about icons not moving.
 
 **Every `LVM_*` call goes through `send_msg`,** never `SendMessage`. A plain
 cross-process SendMessage blocks until Explorer answers; with 400 icons that is
-~800 blocking IPC calls every 1.6s on the frame loop thread, and a busy
-Explorer froze the whole thing.
+~800 blocking IPC calls every 1.6s, and a busy Explorer froze the whole thing.
+The timeout bounds each call; the scanner thread is what keeps the sum off
+the frame. Measured on this machine: 0.04 ms an icon warm, so 400 is 16 ms.
+
+**`update_fighter` is a dispatch table.** `STATES` maps a state name to its
+`_st_*` method; each gets `(f, dt, K)` and returns True to end the update
+early, which is what a joyride does because `start_ride` has already moved
+him. Adding a state is one method and one table entry. The split was proved
+mechanical by hashing a deterministic two-and-a-half-minute ten-way brawl
+before and after: identical.
 
 **Under `pythonw` there is no console.** `sys.stdout` and `sys.stderr` are
 `None`, `print()` silently does nothing, and Tk's default handler for
@@ -221,5 +274,10 @@ dropping it because every fighter was mid-swing bought two minutes of silence
 for nothing — and with ten of them brawling, that was most of them. Call
 `unsay()`.
 
-**Ten of them cost 5.1 ms of a 25 ms budget**, about 360 canvas items. The
-count is not the thing to worry about; paint is.
+**Ten of them cost about 6 ms of a 25 ms budget**, about 400 canvas items. The
+count is not the thing to worry about; paint is. That budget is the default
+40 fps; a settings file at 60 has 16.7 ms, and the same ten are 37% of it.
+
+**One instance, by mutex.** `claim_instance()` in `main()`, before anything is
+written. The handle is held for the life of the process and never closed;
+Windows drops it on exit, crash included.

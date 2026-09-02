@@ -5,32 +5,18 @@
 3. Tray menu actions are queued, not run inside the Win32 window procedure.
 4. Quit from the tray does not leave the frame loop touching a dead root.
 """
-import importlib.util
 import os
 import sys
 
 import win32con
 import win32gui
 
-_TESTS = os.path.dirname(os.path.abspath(__file__))
-SRC = os.environ.get(
-    "GREMLIN_SRC",
-    os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
-HERE = os.path.join(_TESTS, ".tmp")          # scratch; never the repo itself
-os.makedirs(HERE, exist_ok=True)
-LOG = os.path.join(HERE, "diag_log.txt")
-bad = []
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("gm", SRC)
-gm = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gm)
-gm.LOG_PATH = LOG
-gm.MEMORY_PATH = os.path.join(HERE, "diag_memory.json")
-gm.MEM = gm.blank_memory()
-gm.CFG.update(gm.DEFAULTS)
-gm.CFG["sleep_when_idle"] = False
-gm.CFG["all_monitors"] = False
-gm.idle_seconds = lambda: 0.0
+bad = []
+gm = harness.load("diag")
+LOG = gm.LOG_PATH
 
 # --- 1. with a console, it must stay out of the way -------------------------
 if os.path.exists(LOG):
@@ -45,8 +31,7 @@ real_out, real_err = sys.stdout, sys.stderr
 sys.stderr = None
 handle = gm.start_log()
 took_over = sys.stdout is not real_out
-app = gm.App()
-app.poll_cursor = lambda dt: None
+app = harness.build(gm)
 
 # --- 2. a Tk callback error has to land in it -------------------------------
 try:
@@ -100,13 +85,5 @@ if not opened_after:
 if not stopped:
     bad.append("quit from the tray did not stop the loop")
 
-try:
-    app.tray.remove()
-    app.root.destroy()
-except Exception:
-    pass
-for p in (LOG, gm.MEMORY_PATH):
-    if os.path.exists(p):
-        os.remove(p)
 print("\n" + ("FAIL\n  " + "\n  ".join(bad) if bad else "PASS"))
-sys.exit(1 if bad else 0)
+harness.finish(gm, app, bad)

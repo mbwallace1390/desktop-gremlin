@@ -1,0 +1,23 @@
+name: checks
+
+# The same fifteen-odd checks run_all.py runs at the desk. They build a real
+# Tk window and a real App with the shell stubbed, so they need a Windows
+# runner with a desktop session -- which windows-latest has.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pywin32
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Run every check
+        run: python tests\run_all.py -v

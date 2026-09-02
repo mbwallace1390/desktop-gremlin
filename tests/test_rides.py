@@ -5,90 +5,23 @@ them drags a real desktop icon -- three different ways to strand someone
 off-screen, sit him on a ghost, or scribble on the desktop with the switch
 off. Runs against a fake shell; the real desktop is never touched.
 """
-import importlib.util
 import os
 import random
 import sys
 
-_TESTS = os.path.dirname(os.path.abspath(__file__))
-SRC = os.environ.get(
-    "GREMLIN_SRC",
-    os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
-HERE = os.path.join(_TESTS, ".tmp")          # scratch; never the repo itself
-os.makedirs(HERE, exist_ok=True)
-bad = []
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 
+bad = []
 GRID = [(300 + i * 140, 700) for i in range(6)]
 
-
-class FakeShell:
-    OFF = (7000, 9000)
-
-    def __init__(self):
-        self.pos = {i: GRID[i] for i in range(len(GRID))}
-        self.writes = []
-
-    def open(self):
-        return True
-
-    def item_rect(self, i):
-        x, y = self.pos[i]
-        return (x, y, x + 64, y + 64)
-
-    def item_pos(self, i):
-        x, y = self.pos[i]
-        return (x + self.OFF[0], y + self.OFF[1])
-
-    def set_item_pos(self, i, x, y):
-        self.writes.append(i)
-        self.pos[i] = (x - self.OFF[0], y - self.OFF[1])
-        return True
-
-    def close(self):
-        pass
-
-
-spec = importlib.util.spec_from_file_location("gm", SRC)
-gm = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gm)
-gm.MEMORY_PATH = os.path.join(HERE, "rides_memory.json")
-gm.MEM = gm.blank_memory()
-gm.CFG.update(gm.DEFAULTS)
-gm.CFG["crowd"] = 3
-gm.CFG["sleep_when_idle"] = False
-gm.CFG["all_monitors"] = False
-gm.CFG["move_icons"] = False
-gm.CFG["react_to_windows"] = False   # or the REAL foreground window drafts
-gm.foreground_window = lambda: None  # the mount into a hunt mid-ride
-gm.BACKUP_OK = True
-gm.idle_seconds = lambda: 0.0
-shell = FakeShell()
-gm.SHELL = shell
-
-app = gm.App()
-app.poll_cursor = lambda dt: None
-app.icons_locked = False
-
-
-def refresh(own=0, want_icons=True):
-    t = app.terrain
-    t.icons = [("Icon %d" % i, shell.pos[i][0], shell.pos[i][1],
-                shell.pos[i][0] + 64, shell.pos[i][1] + 64, i)
-               for i in range(len(GRID))]
-    t.windows, t.moved, t.win_pos, t.icons_ok = [], {}, {}, True
-    tg, pl = [], []
-    for name, l, tp, r, b, idx in t.icons:
-        tg.append({"cx": (l + r) / 2, "cy": (tp + b) / 2, "top": tp,
-                   "name": name, "w": r - l, "h": b - tp,
-                   "kind": "icon", "key": idx})
-        pl.append((l, r, tp, "icon", idx))
-    t._targets, t.platforms = tg, pl
-    t.bounds = [(x["cx"], x["cy"], x["w"] / 2, max(x["h"], 26) / 2, x)
-                for x in tg]
-
-
-app.terrain.refresh = refresh
-refresh()
+# react_to_windows off, or the REAL foreground window drafts the mount into a
+# hunt mid-ride
+gm = harness.load("rides", crowd=3, react_to_windows=False)
+gm.foreground_window = lambda: None
+shell = harness.FakeShell(GRID)
+app = harness.build(gm, shell)
+refresh = harness.fake_terrain(app, harness.shell_icons(shell))
 f = app.fighters[0]
 DT = 1 / 40.0
 SETTLED = ("idle", "walk", "taunt", "fall", "jump", "thrown")
@@ -248,12 +181,5 @@ print("sleep mid-ride        : state %r, fields clean=%s" % (f.state, clean))
 if not clean:
     bad.append("sleep left ride fields dangling (state %s)" % f.state)
 
-try:
-    app.tray.remove()
-    app.root.destroy()
-except Exception:
-    pass
-if os.path.exists(gm.MEMORY_PATH):
-    os.remove(gm.MEMORY_PATH)
 print("\n" + ("FAIL\n  " + "\n  ".join(bad) if bad else "PASS"))
-sys.exit(1 if bad else 0)
+harness.finish(gm, app, bad)

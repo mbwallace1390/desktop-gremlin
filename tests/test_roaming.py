@@ -5,29 +5,14 @@ The top row of desktop icons on this machine starts at y=5. Being stuck means
 barely moving while in a state that is *trying* to get somewhere -- standing
 still mid-duel is not stuck, so attack/fight/idle/taunt/sleep do not count.
 """
-import importlib.util
 import os
 import random
 import sys
 
-_TESTS = os.path.dirname(os.path.abspath(__file__))
-SRC = os.environ.get(
-    "GREMLIN_SRC",
-    os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
-HERE = os.path.join(_TESTS, ".tmp")          # scratch; never the repo itself
-os.makedirs(HERE, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("gm", SRC)
-gm = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gm)
-gm.MEMORY_PATH = os.path.join(HERE, "stuck_memory.json")
-gm.MEM = gm.blank_memory()
-gm.CFG.update(gm.DEFAULTS)
-gm.CFG["crowd"] = 2
-gm.CFG["sleep_when_idle"] = False
-gm.CFG["all_monitors"] = False
-gm.CFG["move_icons"] = False
-gm.idle_seconds = lambda: 0.0
+gm = harness.load("roaming", crowd=2)
 gm.foreground_window = lambda: ("Notepad", 4242)
 
 ICONS = []
@@ -38,24 +23,8 @@ for col in range(4):
                       col * 95 + 94, 69 + row * 122, i))
         i += 1
 
-app = gm.App()
-app.poll_cursor = lambda dt: None
-
-
-def refresh(own=0, want_icons=True):
-    t = app.terrain
-    t.icons, t.windows, t.moved, t.win_pos, t.icons_ok = list(ICONS), [], {}, {}, True
-    tg, pl = [], []
-    for name, l, tp, r, b, idx in t.icons:
-        tg.append({"cx": (l + r) / 2, "cy": (tp + b) / 2, "top": tp, "name": name,
-                   "w": r - l, "h": b - tp, "kind": "icon", "key": idx})
-        pl.append((l, r, tp, "icon", idx))
-    t._targets, t.platforms = tg, pl
-    t.bounds = [(x["cx"], x["cy"], x["w"] / 2, max(x["h"], 26) / 2, x) for x in tg]
-
-
-app.terrain.refresh = refresh
-refresh()
+app = harness.build(gm)
+harness.fake_terrain(app, ICONS)
 
 random.seed(20260901)
 app.fighters[0].x, app.fighters[0].y = 100.0, 40.0
@@ -149,25 +118,7 @@ if longest_all / 40.0 > 3:
 gy2 = app.ground_at(1100)
 TOP = int(gy2) - 120
 CLIMB_ICON = [("Crate", 1150, TOP, 1214, int(gy2) - 56, 0)]
-
-
-def refresh2(own=0, want_icons=True):
-    t = app.terrain
-    t.icons, t.windows, t.moved, t.win_pos, t.icons_ok = \
-        list(CLIMB_ICON), [], {}, {}, True
-    tg, pl = [], []
-    for name, l, tp, r, b2, idx in t.icons:
-        tg.append({"cx": (l + r) / 2, "cy": (tp + b2) / 2, "top": tp,
-                   "name": name, "w": r - l, "h": b2 - tp,
-                   "kind": "icon", "key": idx})
-        pl.append((l, r, tp, "icon", idx))
-    t._targets, t.platforms = tg, pl
-    t.bounds = [(x["cx"], x["cy"], x["w"] / 2, max(x["h"], 26) / 2, x)
-                for x in tg]
-
-
-app.terrain.refresh = refresh2
-refresh2()
+harness.fake_terrain(app, CLIMB_ICON)
 _decide = app.decide
 app.decide = lambda ff: None            # the scenario steers, nobody improvises
 random.seed(4)
@@ -208,11 +159,4 @@ print("VERDICT: %s" % ("PASS - roams freely, and comes back on the far side"
                        if ok else "FAIL"))
 for b in bad:
     print("   %s" % (b,))
-try:
-    app.tray.remove()
-    app.root.destroy()
-except Exception:
-    pass
-if os.path.exists(gm.MEMORY_PATH):
-    os.remove(gm.MEMORY_PATH)
-sys.exit(0 if ok else 1)
+harness.finish(gm, app, not ok)

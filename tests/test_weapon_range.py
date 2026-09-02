@@ -20,32 +20,15 @@ lifetime -- the obvious move -- did nothing for either.
 Nothing here carries its own copy of a projectile constant. An earlier version
 did, and reported the old numbers after they had been changed.
 """
-import importlib.util
 import os
 import random
 import sys
 
-_TESTS = os.path.dirname(os.path.abspath(__file__))
-SRC = os.environ.get(
-    "GREMLIN_SRC",
-    os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
-HERE = os.path.join(_TESTS, ".tmp")          # scratch; never the repo itself
-os.makedirs(HERE, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("gm", SRC)
-gm = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gm)
-gm.MEMORY_PATH = os.path.join(HERE, "range_memory.json")
-gm.MEM = gm.blank_memory()
-gm.CFG.update(gm.DEFAULTS)
-gm.CFG["crowd"] = 2
-gm.CFG["sleep_when_idle"] = False
-gm.CFG["all_monitors"] = False
-gm.CFG["move_icons"] = False
-gm.idle_seconds = lambda: 0.0
-
-app = gm.App()
-app.poll_cursor = lambda dt: None
+gm = harness.load("range", crowd=2)
+app = harness.build(gm)
 a, b = app.fighters
 GROUND = app.ground_at(900)
 SCALE = .4 + .6 * a.K()
@@ -495,11 +478,4 @@ if bad:
 else:
     print("every weapon reaches, and the flat ones have road to spare")
 
-try:
-    app.tray.remove()
-    app.root.destroy()
-except Exception:
-    pass
-if os.path.exists(gm.MEMORY_PATH):
-    os.remove(gm.MEMORY_PATH)
-sys.exit(1 if bad else 0)
+harness.finish(gm, app, bad)

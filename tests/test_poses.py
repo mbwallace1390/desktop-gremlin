@@ -2,31 +2,15 @@
 produce a broken limb: no NaN, no joint flung away from the body, and the
 knee still leads in every pose where he is upright on his feet.
 """
-import importlib.util
 import math
 import os
 import sys
 
-_TESTS = os.path.dirname(os.path.abspath(__file__))
-SRC = os.environ.get(
-    "GREMLIN_SRC",
-    os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
-HERE = os.path.join(_TESTS, ".tmp")          # scratch; never the repo itself
-os.makedirs(HERE, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("gm", SRC)
-gm = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gm)
-gm.MEMORY_PATH = os.path.join(HERE, "pose_memory.json")
-gm.MEM = gm.blank_memory()
-gm.CFG.update(gm.DEFAULTS)
-gm.CFG["crowd"] = 1
-gm.CFG["sleep_when_idle"] = False
-gm.CFG["all_monitors"] = False
-gm.idle_seconds = lambda: 0.0
-
-app = gm.App()
-app.poll_cursor = lambda dt: None
+gm = harness.load("poses", crowd=1)
+app = harness.build(gm)
 f = app.fighters[0]
 bad = []
 
@@ -141,12 +125,5 @@ if wrong:
 for b in bad[:5]:
     print("   " + b)
 
-try:
-    app.tray.remove()
-    app.root.destroy()
-except Exception:
-    pass
-if os.path.exists(gm.MEMORY_PATH):
-    os.remove(gm.MEMORY_PATH)
 print("\n" + ("FAIL" if bad else "PASS"))
-sys.exit(1 if bad else 0)
+harness.finish(gm, app, bad)

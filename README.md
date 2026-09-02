@@ -59,8 +59,9 @@ desktop_gremlin.py` instead, or just use the .bat.
 | Whether you're there | `GetLastInputInfo` |
 | Where the floor is | per-monitor work area, so they stand *on* your taskbar |
 
-Rescanned every 1.6 seconds. Icon tops and window title bars become platforms.
-Drag a window across the screen and whoever's standing on it rides along.
+Rescanned every 1.6 seconds, on a thread of its own so a busy Explorer never
+stalls the animation. Icon tops and window title bars become platforms. Drag a
+window across the screen and whoever's standing on it rides along.
 
 ---
 
@@ -82,8 +83,14 @@ than being soaked up by whatever icon stood in the way; turn
 clamped to the visible desktop, and all of it is undone by **Restore my icon
 layout**.
 
-**The undo:** your layout is written to `gremlin_icon_backup.json` the first
-time you ever run this. **Tray → Restore my icon layout** puts every icon back.
+**The undo:** your layout is written to `gremlin_icon_backup.json` every time
+you launch, so **Tray → Restore my icon layout** puts every icon back where it
+was when this run started — not where it was months ago when you first tried
+this. The one exception: if the last run moved icons and never put them back
+(a crash, or a quit with the desktop still scattered), that older snapshot is
+the good one, and it is kept until you restore. The very first layout ever
+seen stays in the file as `first`, and the last three launches as `previous`,
+for recovery by hand.
 
 Safety rules, in the code:
 
@@ -227,7 +234,7 @@ All of them sit next to the script, and every one is safe to delete.
 | File | What |
 |---|---|
 | `gremlin_settings.json` | your settings; delete for defaults |
-| `gremlin_icon_backup.json` | your icon layout as it was on first run — the undo |
+| `gremlin_icon_backup.json` | your icon layout as it was when this run started — the undo |
 | `gremlin_memory.json` | what they remember about you |
 | `gremlin.ico` | the tray icon, rebuilt each launch |
 | `gremlin_log.txt` | only written when there is no console; see below |
@@ -248,8 +255,12 @@ All of them sit next to the script, and every one is safe to delete.
 | `react_to_windows` | `true` | comment on window titles, follow focus |
 | `sleep_when_idle` | `true` | |
 | `idle_minutes` | `5.0` | |
-| `all_monitors` | `true` | restart to apply |
+| `all_monitors` | `true` | off keeps them on the primary screen |
+| `pause_fullscreen` | `true` | hide while a fullscreen app is in front: a game, a film, a slideshow |
 | `start_with_windows` | `false` | adds a `Run` key entry |
+
+The frame rate is what you set only while you are watching. Asleep, they tick
+at 10 a second; on battery, at 20; hidden behind a fullscreen app, four.
 
 ---
 
@@ -272,8 +283,15 @@ All of them sit next to the script, and every one is safe to delete.
   (`VirtualAllocEx` + `ReadProcessMemory`). It's the standard technique — every
   "save my icon layout" utility does the same — but an aggressive antivirus may
   ask about it. It only ever reads.
-- **Fullscreen games** cover them, which is usually what you want.
-- Multi-monitor works; turn it off to keep them on the primary screen.
+- **Fullscreen apps** hide them. A game, a film, a slideshow: anything whose
+  window covers a whole monitor, taskbar included, and has the focus. The
+  overlay is withdrawn while it is in front — not just left transparent, since
+  a topmost window over a borderless game is still composited every frame —
+  and comes back when it goes. `pause_fullscreen` turns that off.
+- Multi-monitor works; turn it off to keep them on the primary screen. Dock,
+  undock or change resolution and the overlay re-covers the desktop by itself.
+- **One at a time.** A second launch says so and exits; the tray icon of the
+  first one is where Quit lives.
 
 ---
 
@@ -302,7 +320,9 @@ like a small thing rather than a slowed-down big one.
 Launched from the `.bat` there is no console, so nothing can print an error at
 you. Anything that goes wrong is written to **`gremlin_log.txt`** next to the
 script instead, and the tray icon pops a balloon once to say so. That file is
-the first place to look, and the right thing to attach to an issue.
+the first place to look, and the right thing to attach to an issue. Its first
+line names the commit that was running, read straight out of `.git`, so a fix
+that "didn't work" can be checked against the code that actually ran.
 
 ```
 run_gremlin.bat --debug
@@ -319,9 +339,10 @@ screenshot.
 python tests\run_all.py
 ```
 
-Fifteen checks, a few seconds, nothing to install. They drive the real app
+Sixteen checks, a few seconds, nothing to install. They drive the real app
 with the Windows shell stubbed out, so they never touch your desktop. Every one
-of them encodes a bug that actually shipped.
+of them encodes a bug that actually shipped. The same checks run on every push
+in GitHub Actions, on a Windows runner.
 
 ---
 

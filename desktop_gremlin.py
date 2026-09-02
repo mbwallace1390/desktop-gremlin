@@ -28,6 +28,7 @@ import os
 import random
 import struct
 import sys
+import threading
 import time
 import tkinter as tk
 
@@ -75,6 +76,52 @@ def start_log():
         return None
     sys.stdout = sys.stderr = f
     return f
+
+
+def source_id():
+    """Which commit is running, read straight out of .git.
+
+    No subprocess (under pythonw there is no console to inherit) and no git
+    needed on the machine. Printed at the top of the log, because a fix that
+    "didn't work" is usually a fix that was not the code running."""
+    try:
+        git = os.path.join(HERE, ".git")
+        if os.path.isfile(git):
+            # a worktree: .git is a one-line pointer to the real directory
+            with open(git, encoding="utf-8") as f:
+                git = f.read().split("gitdir:", 1)[1].strip()
+            git = os.path.normpath(os.path.join(HERE, git))
+        common = git
+        cd = os.path.join(git, "commondir")
+        if os.path.isfile(cd):
+            with open(cd, encoding="utf-8") as f:
+                common = os.path.normpath(os.path.join(git, f.read().strip()))
+        with open(os.path.join(git, "HEAD"), encoding="utf-8") as f:
+            head = f.read().strip()
+        if not head.startswith("ref: "):
+            return head[:9]
+        ref = head[5:]
+        p = os.path.join(common, *ref.split("/"))
+        if os.path.isfile(p):
+            with open(p, encoding="utf-8") as f:
+                return f.read().strip()[:9]
+        with open(os.path.join(common, "packed-refs"), encoding="utf-8") as f:
+            for line in f:
+                if line.strip().endswith(" " + ref):
+                    return line.split()[0][:9]
+    except Exception:
+        pass
+    return "unknown"
+
+
+def pythonw_path():
+    """The console-less interpreter beside the one running us.
+
+    This used to be sys.executable with 'python.exe' swapped for 'pythonw.exe',
+    which did nothing for a launcher named anything else -- and the Run key
+    then opened a console window at every login."""
+    p = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    return p if os.path.exists(p) else sys.executable
 
 
 # --------------------------------------------------------------------------
@@ -133,6 +180,35 @@ def send_msg(hwnd, msg, wparam, lparam, timeout=250):
         return None
     return int(res.value) if ok else None
 
+
+# One overlay per desktop. GetLastError has to be read straight after the
+# call, so this goes through its own handle with use_last_error set.
+_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_k32.CreateMutexW.restype = wt.HANDLE
+_k32.CreateMutexW.argtypes = [ctypes.c_void_p, wt.BOOL, wt.LPCWSTR]
+_k32.CloseHandle.argtypes = [wt.HANDLE]
+ERROR_ALREADY_EXISTS = 183
+_INSTANCE = None
+
+
+def claim_instance(name="Local\\DesktopGremlin.one"):
+    """True if we are the only one. The Run key plus a double-click on the
+    .bat used to give two overlays and two tray icons, both moving icons and
+    both writing the memory file. The handle is kept for the life of the
+    process; Windows drops the mutex when we exit, however we exit."""
+    global _INSTANCE
+    try:
+        h = _k32.CreateMutexW(None, False, name)
+        if not h:
+            return True                # cannot tell; let it run
+        if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+            _k32.CloseHandle(h)
+            return False
+        _INSTANCE = h
+        return True
+    except Exception:
+        return True
+
 # ==========================================================================
 #  SETTINGS
 # ==========================================================================
@@ -156,6 +232,7 @@ DEFAULTS = {
     "sleep_when_idle": True,
     "idle_minutes": 5.0,
     "all_monitors": True,
+    "pause_fullscreen": True, # hide while a fullscreen app (a game, a film) is in front
     "start_with_windows": False,
 }
 
@@ -181,7 +258,8 @@ def load_settings():
     except Exception:
         return dict(DEFAULTS)
     for k in ("move_icons", "shots_over_icons", "blood", "react_to_windows",
-              "sleep_when_idle", "all_monitors", "start_with_windows"):
+              "sleep_when_idle", "all_monitors", "pause_fullscreen",
+              "start_with_windows"):
         s[k] = bool(s[k])
     return s
 
@@ -402,8 +480,7 @@ def set_run_at_startup(on):
                              0, winreg.KEY_SET_VALUE)
         name = "DesktopGremlin"
         if on:
-            pyw = sys.executable.replace("python.exe", "pythonw.exe")
-            cmd = f'"{pyw}" "{os.path.join(HERE, os.path.basename(__file__))}"'
+            cmd = f'"{pythonw_path()}" "{os.path.join(HERE, os.path.basename(__file__))}"'
             winreg.SetValueEx(key, name, 0, winreg.REG_SZ, cmd)
         else:
             try:
@@ -488,6 +565,20 @@ def autoarrange_on(lv):
         return False
 
 
+def _locked(fn):
+    """Serialise one shell round trip. The scanner thread reads icon rects
+    through the same remote buffer the frame thread writes positions with, and
+    a write landing between another call's write and its read would hand
+    Explorer the wrong struct. Per call, not per scan: a carry in progress
+    waits for one message, never for four hundred."""
+    def wrapped(self, *a, **k):
+        with self._lock:
+            return fn(self, *a, **k)
+    wrapped.__name__ = fn.__name__
+    wrapped.__doc__ = fn.__doc__
+    return wrapped
+
+
 class ShellView:
     """A borrowed handle on Explorer's desktop ListView, plus a scratch buffer
     inside Explorer's own address space (LVM_* messages take pointers, and a
@@ -499,7 +590,10 @@ class ShellView:
         self.remote = None
         self._names = {}        # index -> label; reading one is the slow call
         self._names_n = -1
+        self._lock = threading.RLock()
+        self._restoring = False # a restore's writes do not dirty the backup
 
+    @_locked
     def open(self):
         lv = find_desktop_listview()
         if not lv:
@@ -525,6 +619,7 @@ class ShellView:
             return False
         return True
 
+    @_locked
     def close(self):
         try:
             if self.remote and self.proc:
@@ -550,9 +645,11 @@ class ShellView:
                                           ctypes.byref(obj), ctypes.sizeof(obj),
                                           ctypes.byref(n))
 
+    @_locked
     def count(self):
         return send_msg(self.lv, LVM_GETITEMCOUNT, 0, 0) or 0
 
+    @_locked
     def item_rect(self, i):
         """Icon glyph rect in SCREEN pixels."""
         r = wt.RECT(LVIR_ICON, 0, 0, 0)
@@ -569,6 +666,7 @@ class ShellView:
             return None
         return (l, t, rr, b)
 
+    @_locked
     def item_pos(self, i):
         """Position in LIST coordinates — what SETITEMPOSITION32 expects."""
         p = wt.POINT(0, 0)
@@ -577,11 +675,16 @@ class ShellView:
         self._read(p)
         return (p.x, p.y)
 
+    @_locked
     def set_item_pos(self, i, x, y):
         p = wt.POINT(int(x), int(y))
         self._write(p)
-        return send_msg(self.lv, LVM_SETITEMPOSITION32, i, self.remote) is not None
+        ok = send_msg(self.lv, LVM_SETITEMPOSITION32, i, self.remote) is not None
+        if ok and not self._restoring:
+            mark_layout_dirty()      # the backup now describes a better past
+        return ok
 
+    @_locked
     def item_text(self, i):
         try:
             off = ctypes.sizeof(LVITEMW) + 16
@@ -646,12 +749,16 @@ class ShellView:
         for name, x, y in snap:
             by_name.setdefault(name, []).append((x, y))
         done = 0
-        for i in range(min(self.count(), 400)):
-            nm = self.item_text(i) or ""
-            if nm in by_name and by_name[nm]:
-                x, y = by_name[nm].pop(0)
-                if self.set_item_pos(i, x, y):
-                    done += 1
+        self._restoring = True
+        try:
+            for i in range(min(self.count(), 400)):
+                nm = self.item_text(i) or ""
+                if nm in by_name and by_name[nm]:
+                    x, y = by_name[nm].pop(0)
+                    if self.set_item_pos(i, x, y):
+                        done += 1
+        finally:
+            self._restoring = False
         try:
             send_msg(self.lv, LVM_REDRAWITEMS, 0, max(0, self.count() - 1))
             win32gui.InvalidateRect(self.lv, None, True)
@@ -665,35 +772,111 @@ SHELL = ShellView()
 # No backup on disk means no undo, so nothing may be dragged. Set by
 # backup_layout(); read by App.can_move_icons() and the settings window.
 BACKUP_OK = False
+# Icons this run has moved and not put back. Mirrored into the backup file,
+# so the next launch knows not to photograph the mess.
+LAYOUT_DIRTY = False
+BACKUP_KEEP = 3          # older launch snapshots kept in the file, for hand recovery
 
 
-def backup_layout():
-    """Write the icon layout once, the first time we ever run."""
-    global BACKUP_OK
-    if os.path.exists(BACKUP_PATH):
-        BACKUP_OK = True
-        return "existing"
-    snap = SHELL.snapshot()
-    if not snap:
-        return "failed"
-    try:
-        with open(BACKUP_PATH, "w", encoding="utf-8") as f:
-            json.dump({"saved": time.strftime("%Y-%m-%d %H:%M:%S"), "icons": snap},
-                      f, indent=1)
-        BACKUP_OK = True
-        return "saved"
-    except Exception as exc:
-        print("layout backup failed:", exc)
-        return "failed"
-
-
-def restore_layout():
+def _read_backup():
     try:
         with open(BACKUP_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("icons"), list) and data["icons"]:
+            return data
     except Exception:
+        pass
+    return None
+
+
+def _write_backup(data):
+    with open(BACKUP_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1)
+
+
+def backup_layout():
+    """Snapshot the icon layout at launch, so Restore puts the desktop back the
+    way it was when THIS run started.
+
+    It used to be written once, ever, and Restore then returned a desktop you
+    had rearranged yourself in the months since. The one time the old
+    snapshot is kept is when the last run moved icons and never put them back
+    (a crash, or a quit with the desktop still scattered): that copy is the
+    only good one, so it stands until Restore has been used. The first layout
+    ever seen stays in the file as "first", the last few launches as
+    "previous" -- neither is on a menu; they are there to be recovered by hand.
+
+    Returns "saved" (fresh snapshot), "kept" (last run left icons moved),
+    "existing" (the shell would not answer but an older file stands) or
+    "failed" (no undo at all, so nothing may be moved)."""
+    global BACKUP_OK, LAYOUT_DIRTY
+    old = _read_backup()
+    if old and old.get("dirty"):
+        BACKUP_OK = True
+        LAYOUT_DIRTY = True
+        return "kept"
+    snap = SHELL.snapshot()
+    if not snap:
+        if old:
+            BACKUP_OK = True
+            return "existing"
+        return "failed"
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    if old:
+        first = old.get("first") or {"saved": old.get("saved", ""), "icons": old["icons"]}
+        previous = [p for p in old.get("previous", []) if isinstance(p, dict)]
+        if old["icons"] != snap:
+            previous.insert(0, {"saved": old.get("saved", ""), "icons": old["icons"]})
+        del previous[BACKUP_KEEP:]
+    else:
+        first = {"saved": stamp, "icons": snap}
+        previous = []
+    try:
+        _write_backup({"saved": stamp, "icons": snap, "dirty": False,
+                       "first": first, "previous": previous})
+    except Exception as exc:
+        print("layout backup failed:", exc)
+        if old:
+            BACKUP_OK = True
+            return "existing"
+        return "failed"
+    BACKUP_OK = True
+    LAYOUT_DIRTY = False
+    return "saved"
+
+
+def mark_layout_dirty():
+    """The first icon a run moves flags the backup on disk. One write a run:
+    after that the flag is already there."""
+    global LAYOUT_DIRTY
+    if LAYOUT_DIRTY:
+        return
+    LAYOUT_DIRTY = True
+    data = _read_backup()
+    if not data or data.get("dirty"):
+        return
+    data["dirty"] = True
+    try:
+        _write_backup(data)
+    except Exception as exc:
+        print("could not flag the layout backup:", exc)
+
+
+def restore_layout():
+    global LAYOUT_DIRTY
+    data = _read_backup()
+    if not data:
         return 0
-    return SHELL.restore(data.get("icons", []))
+    n = SHELL.restore(data.get("icons", []))
+    if n and data.get("dirty"):
+        data["dirty"] = False
+        try:
+            _write_backup(data)
+        except Exception as exc:
+            print("could not clear the layout flag:", exc)
+    if n:
+        LAYOUT_DIRTY = False
+    return n
 
 
 # ---- windows --------------------------------------------------------------
@@ -769,6 +952,47 @@ def foreground_window():
         return (win32gui.GetWindowText(h), h)
     except Exception:
         return None
+
+
+def fullscreen_app(own_hwnd=0):
+    """Is a fullscreen application in front -- a game, a film, a slideshow?
+
+    Judged from the foreground window's visible frame covering its whole
+    monitor, taskbar included. Not from SHQueryUserNotificationState: our own
+    overlay is a fullscreen window, and the shell reports BUSY the moment it
+    appears, which would have paused us against ourselves. We are never the
+    foreground window (WS_EX_NOACTIVATE), so this cannot see us. A maximised
+    window stops at the work area and does not count."""
+    try:
+        h = win32gui.GetForegroundWindow()
+        if not h or h == own_hwnd:
+            return False
+        if win32gui.GetClassName(h) in ("Progman", "WorkerW", "Shell_TrayWnd",
+                                        "Shell_SecondaryTrayWnd"):
+            return False
+        l, t, r, b = frame_bounds(h)
+        mon = win32api.MonitorFromWindow(h, win32con.MONITOR_DEFAULTTONEAREST)
+        ml, mt, mr, mb = win32api.GetMonitorInfo(mon)["Monitor"]
+        return l <= ml + 2 and t <= mt + 2 and r >= mr - 2 and b >= mb - 2
+    except Exception:
+        return False
+
+
+class SYSTEM_POWER_STATUS(ctypes.Structure):
+    _fields_ = [("ACLineStatus", ctypes.c_ubyte), ("BatteryFlag", ctypes.c_ubyte),
+                ("BatteryLifePercent", ctypes.c_ubyte), ("SystemStatusFlag", ctypes.c_ubyte),
+                ("BatteryLifeTime", wt.DWORD), ("BatteryFullLifeTime", wt.DWORD)]
+
+
+def on_battery():
+    """True on battery power. Unknown (255) counts as mains."""
+    try:
+        s = SYSTEM_POWER_STATUS()
+        if not kernel32.GetSystemPowerStatus(ctypes.byref(s)):
+            return False
+        return s.ACLineStatus == 0
+    except Exception:
+        return False
 
 
 class LASTINPUTINFO(ctypes.Structure):
@@ -1064,7 +1288,8 @@ class SettingsWindow:
             drag.config(state="disabled", disabledforeground="#6C7BB0",
                         text="Drag my desktop icons  (no layout backup — off)")
         check("shots_over_icons", "Stray shots fly over my icons  (aimed fire still hits)")
-        check("all_monitors", "Use all monitors  (restart to apply)")
+        check("all_monitors", "Use all monitors")
+        check("pause_fullscreen", "Hide while a fullscreen app is in front  (games, films)")
         check("start_with_windows", "Start with Windows")
 
         tk.Button(self.win, text="Restore my icon layout", command=self.restore,
@@ -1216,6 +1441,59 @@ BLOODC = ("#B0202B", "#8E1620", "#C4303A")   # spray shades; stains use the dark
 # ==========================================================================
 #  terrain
 # ==========================================================================
+class Scanner:
+    """Reads the desktop on its own thread, so a busy Explorer stalls the scan
+    and never the frame. Every LVM_* round trip already has a timeout, but a
+    busy Explorer can take the full 250 ms on each one, and even a quick one
+    is 16 ms for 400 icons -- more than half a frame, every 1.6 s, on the
+    thread that paints. One request in flight at a time; a request made while
+    one is running simply replaces it."""
+
+    def __init__(self):
+        self._wake = threading.Event()
+        self._lock = threading.Lock()
+        self._req = None
+        self._result = None
+        self._thread = None
+
+    def request(self, own_hwnd, want_icons):
+        self._req = (own_hwnd, want_icons)
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._run, name="gremlin-scan",
+                                            daemon=True)
+            self._thread.start()
+        self._wake.set()
+
+    def take(self):
+        """The last finished scan, once; None when nothing new has landed."""
+        with self._lock:
+            r, self._result = self._result, None
+        return r
+
+    def _run(self):
+        while True:
+            self._wake.wait()
+            self._wake.clear()
+            own_hwnd, want_icons = self._req
+            with self._lock:
+                self._result = scan_desktop(own_hwnd, want_icons)
+
+
+def scan_desktop(own_hwnd, want_icons):
+    """(icons or None, windows): one look at the desktop, on whichever thread."""
+    icons = None
+    if want_icons:
+        try:
+            icons = SHELL.read_icons()
+        except Exception:
+            icons = []
+    try:
+        windows = read_windows(own_hwnd)
+    except Exception:
+        windows = []
+    return icons, windows
+
+
 class Terrain:
     def __init__(self):
         self.icons = []       # (name, l, t, r, b, index)
@@ -1227,19 +1505,33 @@ class Terrain:
         self.moved = {}       # hwnd -> (dx, dy) since last refresh
         self.last = 0.0
         self.icons_ok = False
+        self.threaded = False # off until App has its first, synchronous look
+        self.scanner = Scanner()
 
-    def refresh(self, own_hwnd, want_icons=True):
+    def refresh(self, own_hwnd=0, want_icons=True):
+        """Look at the desktop again. Synchronous until `threaded` is set --
+        startup wants its answer now, and so do the checks. After that it only
+        asks the scanner, and the answer lands through poll() a frame or two
+        later; the frame loop calls both."""
+        if self.threaded:
+            self.scanner.request(own_hwnd, want_icons)
+            return
+        self.apply(*scan_desktop(own_hwnd, want_icons))
+
+    def poll(self):
+        """Take in a finished background scan. True if one landed."""
+        r = self.scanner.take()
+        if r is None:
+            return False
+        self.apply(*r)
+        return True
+
+    def apply(self, icons, windows):
         prev = dict(self.win_pos)
-        if want_icons:
-            try:
-                self.icons = SHELL.read_icons()
-                self.icons_ok = bool(self.icons)
-            except Exception:
-                self.icons = []
-        try:
-            self.windows = read_windows(own_hwnd)
-        except Exception:
-            self.windows = []
+        if icons is not None:
+            self.icons = icons
+            self.icons_ok = bool(icons)
+        self.windows = windows
 
         self.win_pos = {}
         self.moved = {}
@@ -2023,13 +2315,7 @@ class App:
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
 
-        vx, vy, vw, vh = virtual_screen()
-        self.mons = monitors()
-        if not CFG["all_monitors"]:
-            m = self.mons[0]
-            vx, vy = m[0][0], m[0][1]
-            vw, vh = m[0][2] - m[0][0], m[0][3] - m[0][1]
-        self.ox, self.oy, self.W, self.H = vx, vy, vw, vh
+        (self.ox, self.oy, self.W, self.H), self.mons = self.screen_box()
 
         self.root.geometry(f"{self.W}x{self.H}+{self.ox}+{self.oy}")
         self.canvas = tk.Canvas(self.root, width=self.W, height=self.H, bg=KEY,
@@ -2050,10 +2336,14 @@ class App:
             self.hwnd = 0
 
         self.terrain = Terrain()
-        self.terrain.refresh(self.hwnd)
+        self.terrain.refresh(self.hwnd)       # the one synchronous look
+        self.terrain.threaded = True
 
         self.time = 0.0
         self.paused = False
+        self.held = False         # hidden behind a fullscreen app; not the user's pause
+        self.on_battery = False
+        self.env_at = -9.0        # when check_environment last ran (loop clock)
         self.running = True
         self.settings_win = None
         self.parts, self.shots, self.slashes, self.booms, self.bolts = [], [], [], [], []
@@ -2196,6 +2486,79 @@ class App:
         want = int(clamp(CFG["crowd"], 1, len(ROSTER)))
         if len(self.fighters) != want:
             self.spawn_fighters()
+        self.fit_screen()             # all_monitors no longer needs a restart
+
+    # -- the machine around us -------------------------------------------
+    def screen_box(self):
+        """((ox, oy, W, H), monitors) for the display setup as it is now."""
+        vx, vy, vw, vh = virtual_screen()
+        mons = monitors()
+        if not CFG["all_monitors"]:
+            m = mons[0]
+            vx, vy = m[0][0], m[0][1]
+            vw, vh = m[0][2] - m[0][0], m[0][3] - m[0][1]
+        return (vx, vy, vw, vh), mons
+
+    def fit_screen(self):
+        """Re-cover the desktop when the monitors change: a dock, an undock, a
+        resolution change. The window used to be sized once at startup, so
+        after any of those the floor sat at the wrong height and half the
+        desktop went uncovered until a restart. True if anything moved."""
+        box, mons = self.screen_box()
+        if box == (self.ox, self.oy, self.W, self.H) and mons == self.mons:
+            return False
+        self.ox, self.oy, self.W, self.H = box
+        self.mons = mons
+        try:
+            self.root.geometry(f"{self.W}x{self.H}+{self.ox}+{self.oy}")
+            self.canvas.config(width=self.W, height=self.H)
+        except Exception:
+            pass
+        for f in self.fighters:
+            # inside the new edges, and never below the new floor: physics only
+            # lands a fall that crosses the floor from above
+            f.x = clamp(f.x, self.ox + 40, self.ox + self.W - 40)
+            f.y = min(f.y, self.ground_at(f.x))
+        return True
+
+    def check_environment(self):
+        """Once a terrain cycle, from the frame loop, held or not: is a
+        fullscreen app in front, are we on battery, did the monitors change."""
+        self.on_battery = on_battery()
+        hold = bool(CFG["pause_fullscreen"]) and fullscreen_app(self.hwnd)
+        if hold != self.held:
+            self.set_held(hold)
+        if not self.held:
+            self.fit_screen()
+
+    def set_held(self, hold):
+        """Hide behind a fullscreen app, and come back when it goes. The
+        window is withdrawn rather than left transparent on top: a topmost
+        layered window over a borderless game is still composited every
+        frame, and still sits above the game."""
+        self.held = hold
+        try:
+            if hold:
+                self.clear_canvas()
+                self.root.withdraw()
+            else:
+                self.root.deiconify()
+                self.root.attributes("-topmost", True)
+        except Exception:
+            pass
+
+    def frame_period(self):
+        """Seconds between frames: the configured rate, slowed when nobody
+        would notice. Asleep they only breathe; on battery paint is the cost;
+        held for a fullscreen app there is nothing to draw at all."""
+        p = 1.0 / CFG["fps"]
+        if self.held:
+            return .25
+        if self.asleep:
+            return max(p, .1)
+        if self.on_battery:
+            return max(p, .05)
+        return p
 
     def on_callback_error(self, exc, val, tb):
         import traceback
@@ -3238,434 +3601,9 @@ class App:
 
         s = f.state
         gy = self.ground_at(f.x)
-
-        if s == "sleep":
-            f.vx = approach(f.vx, 0, 900 * K * dt)
-        elif s == "ko":
-            f.tumble += f.vr * dt * (1 if not f.on_ground else 0)
-            if f.on_ground:
-                f.vr = 0
-                if CFG["blood"] and random.random() < dt * 1.6:
-                    self.blood(f.x + random.uniform(-10, 10) * f.sc,
-                               f.y - 10 * f.sc, 1, K, 60)
-            if f.st > 3.4:
-                f.hp = 100.0
-                f.tumble = 0
-                f.set_state("idle")
-                f.goal = self.time + .6
-                f.set_mood("furious")
-                f.anger = .8
-                f.chat("getup", 1.7)
-        elif s == "idle":
-            f.vx = approach(f.vx, 0, 900 * K * dt)
-            if self.time > f.goal:
-                self.decide(f)
-        elif s == "walk":
-            d = f.wander_to - f.x
-            if abs(d) < 12:
-                f.set_state("idle")
-                f.goal = self.time + random.uniform(.6, 1.8)
-            else:
-                # a long trudge upgrades itself into transport, same
-                # destination -- walking is constant, so this is where the
-                # rides actually get used rather than the rare idle roll
-                if f.on_ground and abs(d) > 300 and f.mode != "fight" \
-                        and random.random() < dt * .35 \
-                        and self.joyride(f, dest=f.wander_to):
-                    return
-                nf = 1 if d > 0 else -1
-                if nf != f.face and abs(f.vx) > 120 * K:
-                    f.skid = 1.0
-                    self.puff(f.x, f.y, 3, DUST, K, 8)
-                f.face = nf
-                f.vx = approach(f.vx, f.face * 150 * K * f.per["dash"],
-                                1400 * K * dt)
-        elif s == "carry":
-            self.carry_tick(f, dt)
-            d = f.wander_to - f.x
-            f.face = 1 if d >= 0 else -1
-            if abs(d) < 16 or f.st > 9:
-                self.drop_icon(f, (f.x, f.carry_dest_y))
-                f.set_mood("smug")
-                f.set_state("idle")
-                f.goal = self.time + .8
-            else:
-                f.vx = approach(f.vx, f.face * 175 * K * f.per["dash"],
-                                1500 * K * dt)
-                if f.on_ground and random.random() < dt * .8 * f.per["hops"]:
-                    f.vy = -700 * K
-        elif s == "blink":
-            f.vx = 0
-            if f.st > .22 and abs(f.x - f.wander_to) > 2:
-                self.puff(f.x, f.y - 20 * f.sc, 5, f.color(), K, 8)
-                f.x = f.wander_to
-                f.y = self.ground_at(f.x)
-                f.on_ground = True
-                self.puff(f.x, f.y - 20 * f.sc, 5, f.color(), K, 8)
-            if f.st > .5:
-                f.set_state("idle")
-                f.goal = self.time + random.uniform(.4, 1.2)
-        elif s == "pogo":
-            d = f.wander_to - f.x
-            f.face = 1 if d >= 0 else -1
-            if (abs(d) < 46 and f.on_ground) or f.st > 9:
-                f.set_state("idle")
-                f.goal = self.time + random.uniform(.5, 1.4)
-            elif f.on_ground:
-                # the stick does the walking: one bounce per contact
-                f.vy = -820 * K
-                f.vx = math.copysign(min(abs(d), 200), d) * K * 1.15
-                f.squash = .6
-                self.puff(f.x, f.y, 2, DUST, K, 6)
-        elif s == "skate":
-            d = f.wander_to - f.x
-            f.face = 1 if d >= 0 else -1
-            if (abs(d) < 30 and f.on_ground) or f.st > 8:
-                f.vx *= .4
-                f.set_state("idle")
-                f.goal = self.time + random.uniform(.4, 1.2)
-            else:
-                f.vx = approach(f.vx, f.face * 330 * K, 900 * K * dt)
-                if f.on_ground and random.random() < dt * 1.1:
-                    f.vy = -560 * K            # ollie, for the fun of it
-                if f.on_ground and random.random() < dt * 6:
-                    self.puff(f.x - f.face * 10, f.y, 1, DUST, K * .7, 4)
-        elif s == "float":
-            # balloon ride: no physics, the string does the flying. Never
-            # above oy+120 -- out of sight upward is still out of sight.
-            rise = -44 * K if f.y > self.oy + 120 else 0.0
-            f.x += (f.vx + math.sin(self.time * 1.1 + f.seedp) * 34 * K) * dt
-            f.y += rise * dt + math.sin(self.time * 2.3 + f.seedp) * 10 * K * dt
-            f.x = clamp(f.x, self.ox + 40, self.ox + self.W - 40)
-            f.on_ground = False
-            if self.time > f.goal or f.st > 10:
-                self.spark(f.x + 9 * f.sc, f.y - 112 * f.sc, 8, f.color(), 240, K)
-                f.vy = 40 * K
-                f.set_state("fall")
-        elif s == "jet":
-            # no physics: the pack is the physics. Chases a cruise point,
-            # wobbles, and cuts out either on arrival or when the tank
-            # (f.goal) runs dry -- the landing is an ordinary fall.
-            dx = f.wander_to - f.x
-            dy = f.jet_y - f.y
-            f.face = 1 if dx >= 0 else -1
-            wob = math.sin(self.time * 5 + f.seedp) * 30
-            f.vx = approach(f.vx, clamp(dx * 2.0 + wob, -320, 320) * K,
-                            700 * K * dt)
-            f.vy = approach(f.vy, clamp(dy * 2.0, -260, 260) * K, 900 * K * dt)
-            f.x = clamp(f.x + f.vx * dt, self.ox + 40, self.ox + self.W - 40)
-            f.y = max(f.y + f.vy * dt, self.oy + 110)
-            f.on_ground = False
-            if random.random() < dt * 26:
-                self.spark(f.x - f.face * 7 * f.sc, f.y - 34 * f.sc, 1,
-                           FIRE, 90, K * .6)
-            if random.random() < dt * 7:
-                self.puff(f.x - f.face * 8 * f.sc, f.y - 28 * f.sc, 1,
-                          DUST, K * .5, 4)
-            if (abs(dx) < 30 and abs(dy) < 60) or self.time > f.goal or f.st > 9:
-                self.puff(f.x, f.y - 30 * f.sc, 3, DUST, K * .7, 8)
-                f.set_state("fall")
-        elif s == "surf":
-            si = f.surf_idx
-            if si is None or not self.can_move_icons():
-                # the ride is tied to the setting; flipping it off mid-surf
-                # (or losing the icon) just tips him off where he is
-                f.surf_idx = None
-                f.set_state("fall")
-            else:
-                d = f.wander_to - f.x
-                f.face = 1 if d >= 0 else -1
-                f.x += clamp(d, -190, 190) * K * dt
-                f.on_ground = False
-                f.vx = f.vy = 0
-                f.surf_t += dt
-                if f.surf_t >= .12:
-                    f.surf_t = 0.0
-                    idx, offx, offy, w, h = si
-                    try:
-                        SHELL.set_item_pos(idx, f.x - w / 2 + offx, f.y + offy)
-                    except Exception:
-                        f.surf_idx = None
-                if random.random() < dt * 5:
-                    self.puff(f.x - f.face * 16, f.y + 8, 1, DUST, K * .7, 5)
-                if abs(d) < 24 or f.st > 10:
-                    f.surf_idx = None
-                    f.vy = -300 * K
-                    f.vx = f.face * 120 * K
-                    f.set_mood("smug")
-                    f.set_state("fall")
-        elif s == "ride":
-            m = f.mount
-            if (m is None or m.hp <= 0 or m not in self.fighters or
-                    m.state in ("ko", "grabbed", "thrown", "sleep", "fight",
-                                "attack", "float", "ride", "blink", "surf")):
-                self.end_ride(f)
-                f.vy = -240 * K
-                f.set_state("fall")
-            elif self.time > f.goal:
-                self.end_ride(f)
-                f.vy = -380 * K
-                f.vx = f.face * 130 * K
-                f.set_state("fall")
-            else:
-                f.x = m.x
-                f.y = m.y - 58 * m.sc
-                f.face = m.face
-                f.on_ground = False
-        elif s == "cannonwind":
-            f.vx = 0
-            d = f.wander_to - f.x
-            f.face = 1 if d >= 0 else -1
-            if f.st > .7:
-                self.boom(f.x + f.face * 26 * f.sc, f.y - 16 * f.sc, 40, K)
-                # aimed at where he is going; far means flatter and harder
-                f.vx = math.copysign(clamp(abs(d) * 1.15, 420, 1100), d) * K
-                f.vy = -clamp(300 + abs(d) * .45, 520, 820) * K
-                f.vr = f.face * random.uniform(6, 11)
-                f.on_ground = False
-                f.stunt = True
-                f.set_mood("hyped", quiet=random.random() < .4)
-                f.set_state("thrown")
-        elif s == "fight":
-            foe = f.foe
-            if not foe or foe.hp <= 0 or foe.state in ("ko", "grabbed"):
-                f.mode = "roam"
-                f.set_state("idle")
-                f.goal = self.time + .4
-            elif f.st > 12:
-                f.mode = "roam"
-                f.set_state("idle")
-            elif f.hp <= f.per["nerve"] * 100:
-                # he has had enough. The coward's nerve is high so he leaves
-                # early; the zealot's is zero so he never does.
-                f.mode = "roam"
-                f.target = None
-                f.wander_to = clamp(f.x - (foe.x - f.x), self.ox + 60,
-                                    self.ox + self.W - 60)
-                f.set_state("walk")
-                # Breaking off is the nerve trait's one visible moment, so it
-                # gets its own line instead of borrowing the generic ouch.
-                f.yell("flee", 1.4)
-            else:
-                d = foe.x - f.x
-                f.face = 1 if d >= 0 else -1
-                reach = REACH[f.plan] * (.4 + .6 * K)
-                if abs(d) > reach - 14:
-                    # a big gap is a travel problem: sometimes he closes it
-                    # on wheels or a jet instead of trudging. Landing puts
-                    # him straight back into the fight -- mode survives.
-                    if abs(d) > 460 and f.on_ground and random.random() < dt * .5 \
-                            and self.joyride(f, dest=foe.x):
-                        return
-                    f.vx = approach(f.vx, f.face * 290 * K * f.per["dash"],
-                                    1700 * K * dt)
-                    if f.on_ground and (foe.y < f.y - 60 or
-                                        random.random() < dt * .55 * f.per["hops"]):
-                        f.vy = -880 * K
-                        f.set_state("jump")
-                        f.mode = "fight"
-                elif self.time >= f.atk_cd:
-                    f.vx = approach(f.vx, 0, 1900 * K * dt)
-                    self.start_attack(f, foe=True)
-                else:
-                    # circle each other between strikes
-                    f.vx = approach(f.vx, -f.face * 90 * K, 900 * K * dt)
-        elif s == "hunt":
-            t = f.target
-            if not t:
-                f.set_state("idle")
-                f.goal = self.time + .4
-            elif f.st > 9:
-                f.target = None
-                f.set_state("idle")
-            else:
-                reach = REACH[f.plan] * (.4 + .6 * K)
-                d = t["cx"] - f.x
-                f.face = 1 if d >= 0 else -1
-                if f.on_ground and f.st > .3 and (abs(d) > 520 or t["top"] < f.y - 175) \
-                        and random.random() < dt * 2.6:
-                    self.fire_hook(f, t["cx"], t["top"] - 26)
-                elif abs(d) > reach - 20:
-                    spd = (300 if f.mood == "furious" else 205) * K * f.per["dash"]
-                    f.vx = approach(f.vx, f.face * spd, 1600 * K * dt)
-                    # something climbable overhead gets scaled, not bounced
-                    # at; the leap is kept for the tall, the far, and the
-                    # characters who were always going to bounce anyway
-                    if t["top"] < f.y - 40 and self.try_climb(f, t):
-                        pass
-                    elif f.on_ground and (random.random() < dt * .35 * f.per["hops"] or
-                                          (t["top"] < f.y - 70 and f.y - t["top"] >= 170
-                                           and random.random() < dt * 3)):
-                        f.vy = -880 * K
-                        f.set_state("jump")
-                elif self.time >= f.atk_cd:
-                    f.vx = approach(f.vx, 0, 1800 * K * dt)
-                    self.start_attack(f)
-                else:
-                    f.vx = approach(f.vx, 0, 1800 * K * dt)
-        elif s in ("jump", "fall"):
-            if f.on_ground:
-                f.set_state("fight" if f.mode == "fight" and f.foe and f.foe.hp > 0
-                            else ("hunt" if f.target else "idle"))
-        elif s == "ledge":
-            f.vx = f.vy = 0
-            if f.st > .5:
-                # haul up over the lip. This used to be a spring-jump off the
-                # ledge, which read as a pinball, not a person.
-                f.ledge_cd = self.time + 1.5   # not the same lip twice running
-                f.set_state("climb")
-        elif s == "climb":
-            # hand over hand up the side; physics is off, the wall is the
-            # physics. Terrain can shift underneath mid-climb -- the mantle
-            # onto empty air just becomes a fall, which reads fine.
-            f.vx = f.vy = 0.0
-            f.on_ground = False
-            f.face = f.climb_side
-            lip = f.climb_top + 44 * f.sc
-            if f.y > lip:
-                # he moves in PULLS: surge while an arm hauls, hang while it
-                # reaches for the next hold. A constant glide read as
-                # levitation, and the speed is paced so the pinned grips
-                # re-grab about twice a second, not in a blur.
-                pull = .55 + .9 * max(0.0, math.sin(self.time * 4.4))
-                f.y = max(f.y - (45 + 45 * K) * pull * dt, lip)
-                if random.random() < dt * 2.5:
-                    self.puff(f.x + f.face * 8 * f.sc,
-                              f.y - 16 * f.sc, 1, DUST, K * .5, 3)
-            else:
-                # the mantle: up and over in one motion
-                f.y = max(f.y - (70 + 80 * K) * dt, f.climb_top)
-                f.x = approach(f.x, f.climb_x + f.climb_side * 11,
-                               (60 + 40 * K) * dt)
-                if f.y <= f.climb_top + .5:
-                    f.y = f.climb_top
-                    f.x = f.climb_x + f.climb_side * 11
-                    f.on_ground = True
-                    f.squash = .3
-                    if f.target:
-                        f.set_state("hunt")
-                    else:
-                        f.set_state("idle")
-                        f.goal = self.time + .4
-            if f.st > 3.5:
-                f.set_state("fall")
-        elif s == "wallslide":
-            f.vy = min(f.vy, 150 * K)
-            if f.on_ground or f.st > 1.4:
-                f.set_state("fall")
-        elif s == "attack":
-            f.atk += dt
-            k = f.atk / f.atk_dur
-            if f.weapon == "minigun":
-                if .2 < k * f.atk_dur < f.atk_dur - .2:
-                    f.burst -= dt
-                    if f.burst <= 0:
-                        f.burst = .07
-                        f.aim = math.atan2(self.aim_point(f)[1] - (f.y - 44 * f.sc),
-                                           self.aim_point(f)[0] - f.x) + random.uniform(-.06, .06)
-                        # Gravity, not lifetime, was what stopped these. He aims
-                        # 3 degrees down at the other one's chest, so at the old
-                        # 60 they ploughed into the floor after 498px with a
-                        # third of their life left. A minigun round should not
-                        # arc like a thrown rock.
-                        self.shoot(f, "pellet", 1350, 10, 1.15)
-                        self.shake(.05, 1.6 * K)
-            elif f.weapon == "chainsaw":
-                if .2 < f.atk < f.atk_dur - .1:
-                    f.burst -= dt
-                    if f.burst <= 0:
-                        f.burst = .18
-                        self.melee_hit(f, 96)
-                        self.spark(f.x + f.face * 30 * f.sc, f.y - 34 * f.sc,
-                                   4, "#FFE7A8", 200, K)
-            elif not f.fired and k > .55:
-                f.fired = True
-                self.release_attack(f)
-            f.vx = approach(f.vx, 0, 2200 * K * dt)
-            if k >= 1:
-                f.fired = False
-                f.atk_cd = self.time + random.uniform(.24, .62) / CFG["chaos"]
-                if f.mode == "fight" and f.foe and f.foe.hp > 0:
-                    if random.random() < .35:
-                        # Between attacks, never inside one: a new weapon means
-                        # a new distance, and the fight state has to be given
-                        # the chance to close it before he swings.
-                        f.plan = plan_weapon(f.per, f.mood == "furious")
-                    f.set_state("fight")
-                elif f.target and random.random() < .72:
-                    if random.random() < .4:
-                        f.plan = plan_weapon(f.per, f.mood == "furious")
-                    f.set_state("hunt")
-                else:
-                    f.set_state("idle")
-                    f.goal = self.time + random.uniform(.3, 1.1)
-        elif s == "hookfire":
-            h = f.hook
-            if h:
-                h["t"] += dt
-                if h["t"] / h["dur"] >= 1:
-                    f.zip = {"ax": h["tx"], "ay": h["ty"], "t": 0, "sx": f.x, "sy": f.y,
-                             "dur": clamp(dist(f.x, f.y, h["tx"], h["ty"]) /
-                                          (620 * (.5 + .5 * K)), .35, 1.6)}
-                    f.set_state("zip")
-            else:
-                f.set_state("idle")
-        elif s == "zip":
-            z = f.zip
-            z["t"] += dt
-            k = clamp(z["t"] / z["dur"], 0, 1)
-            e = k * k * (3 - 2 * k)
-            f.x = lerp(z["sx"], z["ax"], e)
-            f.y = lerp(z["sy"], z["ay"] + 34 * f.sc, e) - math.sin(k * math.pi) * 26 * (.5 + .5 * K)
-            f.on_ground = False
-            if k >= 1:
-                f.vy = -260 * K
-                f.vx = math.copysign(190 * K, z["ax"] - z["sx"] or 1)
-                f.zip = f.hook = None
-                f.set_state("fall")
-        elif s == "taunt":
-            f.vx = approach(f.vx, 0, 1400 * K * dt)
-            if f.st > 1.5:
-                f.set_state("idle")
-                f.goal = self.time + .5
-        elif s == "cursor":
-            d = self.mouse["x"] - f.x
-            f.face = 1 if d >= 0 else -1
-            if f.st > 4.5:
-                f.set_state("idle")
-                f.goal = self.time + .3
-            elif abs(d) > 130:
-                f.vx = approach(f.vx, f.face * 250 * K * f.per["dash"],
-                                1600 * K * dt)
-                if f.on_ground and self.mouse["y"] < f.y - 120 * f.sc and \
-                        random.random() < dt * 2.2:
-                    f.vy = -880 * K
-                    f.set_state("jump")
-            else:
-                f.vx = approach(f.vx, 0, 2000 * K * dt)
-                self.start_attack(f, at=(self.mouse["x"], self.mouse["y"]))
-        elif s == "grabbed":
-            f.x = lerp(f.x, f.gx, 1 - pow(.0008, dt))
-            f.y = lerp(f.y, f.gy, 1 - pow(.0008, dt))
-            f.vx = f.vy = 0
-            f.on_ground = False
-        elif s == "thrown":
-            f.tumble += f.vr * dt
-            if f.on_ground:
-                f.vr = f.tumble = 0
-                f.stun = .8
-                f.set_state("idle")
-                f.goal = self.time + 1.0
-                if f.stunt:
-                    # he launched himself; landing is the good part
-                    f.stunt = False
-                    self.puff(f.x, f.y, 4, DUST, K, 10)
-                    if f.hp > 0:
-                        f.set_mood("smug" if random.random() < .6 else "hyped")
-                else:
-                    f.anger = clamp(f.anger + .3 * f.per["grudge"], 0, 1)
-                    if f.hp > 0:
-                        f.set_mood("furious" if random.random() < .62 else "sulking")
+        step = self.STATES.get(s)
+        if step is not None and step(self, f, dt, K):
+            return
 
         # parachute: the nervous deploy on any long fall (their idea of a
         # transport is not hitting the ground), the fearless mostly plummet
@@ -3687,6 +3625,495 @@ class App:
         sp = abs(f.vx)
         f.walk += dt * (sp / (22 * K) + (2 if sp > 8 * K else 0))
         f.look = lerp(f.look, clamp((self.mouse["x"] - f.x) / 320, -1, 1), 1 - pow(.02, dt))
+
+    # ------------------------------------------------------------------
+    # one method per state. Each gets the fighter, the frame time and his
+    # speed scale, and may return True to end his update early -- that is
+    # what a joyride does, because start_ride has already moved him.
+    # STATES, at the bottom, is the whole state machine in one place.
+    # ------------------------------------------------------------------
+    def _st_sleep(self, f, dt, K):
+        f.vx = approach(f.vx, 0, 900 * K * dt)
+
+    def _st_ko(self, f, dt, K):
+        f.tumble += f.vr * dt * (1 if not f.on_ground else 0)
+        if f.on_ground:
+            f.vr = 0
+            if CFG["blood"] and random.random() < dt * 1.6:
+                self.blood(f.x + random.uniform(-10, 10) * f.sc,
+                           f.y - 10 * f.sc, 1, K, 60)
+        if f.st > 3.4:
+            f.hp = 100.0
+            f.tumble = 0
+            f.set_state("idle")
+            f.goal = self.time + .6
+            f.set_mood("furious")
+            f.anger = .8
+            f.chat("getup", 1.7)
+
+    def _st_idle(self, f, dt, K):
+        f.vx = approach(f.vx, 0, 900 * K * dt)
+        if self.time > f.goal:
+            self.decide(f)
+
+    def _st_walk(self, f, dt, K):
+        d = f.wander_to - f.x
+        if abs(d) < 12:
+            f.set_state("idle")
+            f.goal = self.time + random.uniform(.6, 1.8)
+        else:
+            # a long trudge upgrades itself into transport, same
+            # destination -- walking is constant, so this is where the
+            # rides actually get used rather than the rare idle roll
+            if f.on_ground and abs(d) > 300 and f.mode != "fight" \
+                    and random.random() < dt * .35 \
+                    and self.joyride(f, dest=f.wander_to):
+                return True
+            nf = 1 if d > 0 else -1
+            if nf != f.face and abs(f.vx) > 120 * K:
+                f.skid = 1.0
+                self.puff(f.x, f.y, 3, DUST, K, 8)
+            f.face = nf
+            f.vx = approach(f.vx, f.face * 150 * K * f.per["dash"],
+                            1400 * K * dt)
+
+    def _st_carry(self, f, dt, K):
+        self.carry_tick(f, dt)
+        d = f.wander_to - f.x
+        f.face = 1 if d >= 0 else -1
+        if abs(d) < 16 or f.st > 9:
+            self.drop_icon(f, (f.x, f.carry_dest_y))
+            f.set_mood("smug")
+            f.set_state("idle")
+            f.goal = self.time + .8
+        else:
+            f.vx = approach(f.vx, f.face * 175 * K * f.per["dash"],
+                            1500 * K * dt)
+            if f.on_ground and random.random() < dt * .8 * f.per["hops"]:
+                f.vy = -700 * K
+
+    def _st_blink(self, f, dt, K):
+        f.vx = 0
+        if f.st > .22 and abs(f.x - f.wander_to) > 2:
+            self.puff(f.x, f.y - 20 * f.sc, 5, f.color(), K, 8)
+            f.x = f.wander_to
+            f.y = self.ground_at(f.x)
+            f.on_ground = True
+            self.puff(f.x, f.y - 20 * f.sc, 5, f.color(), K, 8)
+        if f.st > .5:
+            f.set_state("idle")
+            f.goal = self.time + random.uniform(.4, 1.2)
+
+    def _st_pogo(self, f, dt, K):
+        d = f.wander_to - f.x
+        f.face = 1 if d >= 0 else -1
+        if (abs(d) < 46 and f.on_ground) or f.st > 9:
+            f.set_state("idle")
+            f.goal = self.time + random.uniform(.5, 1.4)
+        elif f.on_ground:
+            # the stick does the walking: one bounce per contact
+            f.vy = -820 * K
+            f.vx = math.copysign(min(abs(d), 200), d) * K * 1.15
+            f.squash = .6
+            self.puff(f.x, f.y, 2, DUST, K, 6)
+
+    def _st_skate(self, f, dt, K):
+        d = f.wander_to - f.x
+        f.face = 1 if d >= 0 else -1
+        if (abs(d) < 30 and f.on_ground) or f.st > 8:
+            f.vx *= .4
+            f.set_state("idle")
+            f.goal = self.time + random.uniform(.4, 1.2)
+        else:
+            f.vx = approach(f.vx, f.face * 330 * K, 900 * K * dt)
+            if f.on_ground and random.random() < dt * 1.1:
+                f.vy = -560 * K            # ollie, for the fun of it
+            if f.on_ground and random.random() < dt * 6:
+                self.puff(f.x - f.face * 10, f.y, 1, DUST, K * .7, 4)
+
+    def _st_float(self, f, dt, K):
+        # balloon ride: no physics, the string does the flying. Never
+        # above oy+120 -- out of sight upward is still out of sight.
+        rise = -44 * K if f.y > self.oy + 120 else 0.0
+        f.x += (f.vx + math.sin(self.time * 1.1 + f.seedp) * 34 * K) * dt
+        f.y += rise * dt + math.sin(self.time * 2.3 + f.seedp) * 10 * K * dt
+        f.x = clamp(f.x, self.ox + 40, self.ox + self.W - 40)
+        f.on_ground = False
+        if self.time > f.goal or f.st > 10:
+            self.spark(f.x + 9 * f.sc, f.y - 112 * f.sc, 8, f.color(), 240, K)
+            f.vy = 40 * K
+            f.set_state("fall")
+
+    def _st_jet(self, f, dt, K):
+        # no physics: the pack is the physics. Chases a cruise point,
+        # wobbles, and cuts out either on arrival or when the tank
+        # (f.goal) runs dry -- the landing is an ordinary fall.
+        dx = f.wander_to - f.x
+        dy = f.jet_y - f.y
+        f.face = 1 if dx >= 0 else -1
+        wob = math.sin(self.time * 5 + f.seedp) * 30
+        f.vx = approach(f.vx, clamp(dx * 2.0 + wob, -320, 320) * K,
+                        700 * K * dt)
+        f.vy = approach(f.vy, clamp(dy * 2.0, -260, 260) * K, 900 * K * dt)
+        f.x = clamp(f.x + f.vx * dt, self.ox + 40, self.ox + self.W - 40)
+        f.y = max(f.y + f.vy * dt, self.oy + 110)
+        f.on_ground = False
+        if random.random() < dt * 26:
+            self.spark(f.x - f.face * 7 * f.sc, f.y - 34 * f.sc, 1,
+                       FIRE, 90, K * .6)
+        if random.random() < dt * 7:
+            self.puff(f.x - f.face * 8 * f.sc, f.y - 28 * f.sc, 1,
+                      DUST, K * .5, 4)
+        if (abs(dx) < 30 and abs(dy) < 60) or self.time > f.goal or f.st > 9:
+            self.puff(f.x, f.y - 30 * f.sc, 3, DUST, K * .7, 8)
+            f.set_state("fall")
+
+    def _st_surf(self, f, dt, K):
+        si = f.surf_idx
+        if si is None or not self.can_move_icons():
+            # the ride is tied to the setting; flipping it off mid-surf
+            # (or losing the icon) just tips him off where he is
+            f.surf_idx = None
+            f.set_state("fall")
+        else:
+            d = f.wander_to - f.x
+            f.face = 1 if d >= 0 else -1
+            f.x += clamp(d, -190, 190) * K * dt
+            f.on_ground = False
+            f.vx = f.vy = 0
+            f.surf_t += dt
+            if f.surf_t >= .12:
+                f.surf_t = 0.0
+                idx, offx, offy, w, h = si
+                try:
+                    SHELL.set_item_pos(idx, f.x - w / 2 + offx, f.y + offy)
+                except Exception:
+                    f.surf_idx = None
+            if random.random() < dt * 5:
+                self.puff(f.x - f.face * 16, f.y + 8, 1, DUST, K * .7, 5)
+            if abs(d) < 24 or f.st > 10:
+                f.surf_idx = None
+                f.vy = -300 * K
+                f.vx = f.face * 120 * K
+                f.set_mood("smug")
+                f.set_state("fall")
+
+    def _st_ride(self, f, dt, K):
+        m = f.mount
+        if (m is None or m.hp <= 0 or m not in self.fighters or
+                m.state in ("ko", "grabbed", "thrown", "sleep", "fight",
+                            "attack", "float", "ride", "blink", "surf")):
+            self.end_ride(f)
+            f.vy = -240 * K
+            f.set_state("fall")
+        elif self.time > f.goal:
+            self.end_ride(f)
+            f.vy = -380 * K
+            f.vx = f.face * 130 * K
+            f.set_state("fall")
+        else:
+            f.x = m.x
+            f.y = m.y - 58 * m.sc
+            f.face = m.face
+            f.on_ground = False
+
+    def _st_cannonwind(self, f, dt, K):
+        f.vx = 0
+        d = f.wander_to - f.x
+        f.face = 1 if d >= 0 else -1
+        if f.st > .7:
+            self.boom(f.x + f.face * 26 * f.sc, f.y - 16 * f.sc, 40, K)
+            # aimed at where he is going; far means flatter and harder
+            f.vx = math.copysign(clamp(abs(d) * 1.15, 420, 1100), d) * K
+            f.vy = -clamp(300 + abs(d) * .45, 520, 820) * K
+            f.vr = f.face * random.uniform(6, 11)
+            f.on_ground = False
+            f.stunt = True
+            f.set_mood("hyped", quiet=random.random() < .4)
+            f.set_state("thrown")
+
+    def _st_fight(self, f, dt, K):
+        foe = f.foe
+        if not foe or foe.hp <= 0 or foe.state in ("ko", "grabbed"):
+            f.mode = "roam"
+            f.set_state("idle")
+            f.goal = self.time + .4
+        elif f.st > 12:
+            f.mode = "roam"
+            f.set_state("idle")
+        elif f.hp <= f.per["nerve"] * 100:
+            # he has had enough. The coward's nerve is high so he leaves
+            # early; the zealot's is zero so he never does.
+            f.mode = "roam"
+            f.target = None
+            f.wander_to = clamp(f.x - (foe.x - f.x), self.ox + 60,
+                                self.ox + self.W - 60)
+            f.set_state("walk")
+            # Breaking off is the nerve trait's one visible moment, so it
+            # gets its own line instead of borrowing the generic ouch.
+            f.yell("flee", 1.4)
+        else:
+            d = foe.x - f.x
+            f.face = 1 if d >= 0 else -1
+            reach = REACH[f.plan] * (.4 + .6 * K)
+            if abs(d) > reach - 14:
+                # a big gap is a travel problem: sometimes he closes it
+                # on wheels or a jet instead of trudging. Landing puts
+                # him straight back into the fight -- mode survives.
+                if abs(d) > 460 and f.on_ground and random.random() < dt * .5 \
+                        and self.joyride(f, dest=foe.x):
+                    return True
+                f.vx = approach(f.vx, f.face * 290 * K * f.per["dash"],
+                                1700 * K * dt)
+                if f.on_ground and (foe.y < f.y - 60 or
+                                    random.random() < dt * .55 * f.per["hops"]):
+                    f.vy = -880 * K
+                    f.set_state("jump")
+                    f.mode = "fight"
+            elif self.time >= f.atk_cd:
+                f.vx = approach(f.vx, 0, 1900 * K * dt)
+                self.start_attack(f, foe=True)
+            else:
+                # circle each other between strikes
+                f.vx = approach(f.vx, -f.face * 90 * K, 900 * K * dt)
+
+    def _st_hunt(self, f, dt, K):
+        t = f.target
+        if not t:
+            f.set_state("idle")
+            f.goal = self.time + .4
+        elif f.st > 9:
+            f.target = None
+            f.set_state("idle")
+        else:
+            reach = REACH[f.plan] * (.4 + .6 * K)
+            d = t["cx"] - f.x
+            f.face = 1 if d >= 0 else -1
+            if f.on_ground and f.st > .3 and (abs(d) > 520 or t["top"] < f.y - 175) \
+                    and random.random() < dt * 2.6:
+                self.fire_hook(f, t["cx"], t["top"] - 26)
+            elif abs(d) > reach - 20:
+                spd = (300 if f.mood == "furious" else 205) * K * f.per["dash"]
+                f.vx = approach(f.vx, f.face * spd, 1600 * K * dt)
+                # something climbable overhead gets scaled, not bounced
+                # at; the leap is kept for the tall, the far, and the
+                # characters who were always going to bounce anyway
+                if t["top"] < f.y - 40 and self.try_climb(f, t):
+                    pass
+                elif f.on_ground and (random.random() < dt * .35 * f.per["hops"] or
+                                      (t["top"] < f.y - 70 and f.y - t["top"] >= 170
+                                       and random.random() < dt * 3)):
+                    f.vy = -880 * K
+                    f.set_state("jump")
+            elif self.time >= f.atk_cd:
+                f.vx = approach(f.vx, 0, 1800 * K * dt)
+                self.start_attack(f)
+            else:
+                f.vx = approach(f.vx, 0, 1800 * K * dt)
+
+    def _st_airborne(self, f, dt, K):
+        if f.on_ground:
+            f.set_state("fight" if f.mode == "fight" and f.foe and f.foe.hp > 0
+                        else ("hunt" if f.target else "idle"))
+
+    def _st_ledge(self, f, dt, K):
+        f.vx = f.vy = 0
+        if f.st > .5:
+            # haul up over the lip. This used to be a spring-jump off the
+            # ledge, which read as a pinball, not a person.
+            f.ledge_cd = self.time + 1.5   # not the same lip twice running
+            f.set_state("climb")
+
+    def _st_climb(self, f, dt, K):
+        # hand over hand up the side; physics is off, the wall is the
+        # physics. Terrain can shift underneath mid-climb -- the mantle
+        # onto empty air just becomes a fall, which reads fine.
+        f.vx = f.vy = 0.0
+        f.on_ground = False
+        f.face = f.climb_side
+        lip = f.climb_top + 44 * f.sc
+        if f.y > lip:
+            # he moves in PULLS: surge while an arm hauls, hang while it
+            # reaches for the next hold. A constant glide read as
+            # levitation, and the speed is paced so the pinned grips
+            # re-grab about twice a second, not in a blur.
+            pull = .55 + .9 * max(0.0, math.sin(self.time * 4.4))
+            f.y = max(f.y - (45 + 45 * K) * pull * dt, lip)
+            if random.random() < dt * 2.5:
+                self.puff(f.x + f.face * 8 * f.sc,
+                          f.y - 16 * f.sc, 1, DUST, K * .5, 3)
+        else:
+            # the mantle: up and over in one motion
+            f.y = max(f.y - (70 + 80 * K) * dt, f.climb_top)
+            f.x = approach(f.x, f.climb_x + f.climb_side * 11,
+                           (60 + 40 * K) * dt)
+            if f.y <= f.climb_top + .5:
+                f.y = f.climb_top
+                f.x = f.climb_x + f.climb_side * 11
+                f.on_ground = True
+                f.squash = .3
+                if f.target:
+                    f.set_state("hunt")
+                else:
+                    f.set_state("idle")
+                    f.goal = self.time + .4
+        if f.st > 3.5:
+            f.set_state("fall")
+
+    def _st_wallslide(self, f, dt, K):
+        f.vy = min(f.vy, 150 * K)
+        if f.on_ground or f.st > 1.4:
+            f.set_state("fall")
+
+    def _st_attack(self, f, dt, K):
+        f.atk += dt
+        k = f.atk / f.atk_dur
+        if f.weapon == "minigun":
+            if .2 < k * f.atk_dur < f.atk_dur - .2:
+                f.burst -= dt
+                if f.burst <= 0:
+                    f.burst = .07
+                    f.aim = math.atan2(self.aim_point(f)[1] - (f.y - 44 * f.sc),
+                                       self.aim_point(f)[0] - f.x) + random.uniform(-.06, .06)
+                    # Gravity, not lifetime, was what stopped these. He aims
+                    # 3 degrees down at the other one's chest, so at the old
+                    # 60 they ploughed into the floor after 498px with a
+                    # third of their life left. A minigun round should not
+                    # arc like a thrown rock.
+                    self.shoot(f, "pellet", 1350, 10, 1.15)
+                    self.shake(.05, 1.6 * K)
+        elif f.weapon == "chainsaw":
+            if .2 < f.atk < f.atk_dur - .1:
+                f.burst -= dt
+                if f.burst <= 0:
+                    f.burst = .18
+                    self.melee_hit(f, 96)
+                    self.spark(f.x + f.face * 30 * f.sc, f.y - 34 * f.sc,
+                               4, "#FFE7A8", 200, K)
+        elif not f.fired and k > .55:
+            f.fired = True
+            self.release_attack(f)
+        f.vx = approach(f.vx, 0, 2200 * K * dt)
+        if k >= 1:
+            f.fired = False
+            f.atk_cd = self.time + random.uniform(.24, .62) / CFG["chaos"]
+            if f.mode == "fight" and f.foe and f.foe.hp > 0:
+                if random.random() < .35:
+                    # Between attacks, never inside one: a new weapon means
+                    # a new distance, and the fight state has to be given
+                    # the chance to close it before he swings.
+                    f.plan = plan_weapon(f.per, f.mood == "furious")
+                f.set_state("fight")
+            elif f.target and random.random() < .72:
+                if random.random() < .4:
+                    f.plan = plan_weapon(f.per, f.mood == "furious")
+                f.set_state("hunt")
+            else:
+                f.set_state("idle")
+                f.goal = self.time + random.uniform(.3, 1.1)
+
+    def _st_hookfire(self, f, dt, K):
+        h = f.hook
+        if h:
+            h["t"] += dt
+            if h["t"] / h["dur"] >= 1:
+                f.zip = {"ax": h["tx"], "ay": h["ty"], "t": 0, "sx": f.x, "sy": f.y,
+                         "dur": clamp(dist(f.x, f.y, h["tx"], h["ty"]) /
+                                      (620 * (.5 + .5 * K)), .35, 1.6)}
+                f.set_state("zip")
+        else:
+            f.set_state("idle")
+
+    def _st_zip(self, f, dt, K):
+        z = f.zip
+        z["t"] += dt
+        k = clamp(z["t"] / z["dur"], 0, 1)
+        e = k * k * (3 - 2 * k)
+        f.x = lerp(z["sx"], z["ax"], e)
+        f.y = lerp(z["sy"], z["ay"] + 34 * f.sc, e) - math.sin(k * math.pi) * 26 * (.5 + .5 * K)
+        f.on_ground = False
+        if k >= 1:
+            f.vy = -260 * K
+            f.vx = math.copysign(190 * K, z["ax"] - z["sx"] or 1)
+            f.zip = f.hook = None
+            f.set_state("fall")
+
+    def _st_taunt(self, f, dt, K):
+        f.vx = approach(f.vx, 0, 1400 * K * dt)
+        if f.st > 1.5:
+            f.set_state("idle")
+            f.goal = self.time + .5
+
+    def _st_cursor(self, f, dt, K):
+        d = self.mouse["x"] - f.x
+        f.face = 1 if d >= 0 else -1
+        if f.st > 4.5:
+            f.set_state("idle")
+            f.goal = self.time + .3
+        elif abs(d) > 130:
+            f.vx = approach(f.vx, f.face * 250 * K * f.per["dash"],
+                            1600 * K * dt)
+            if f.on_ground and self.mouse["y"] < f.y - 120 * f.sc and \
+                    random.random() < dt * 2.2:
+                f.vy = -880 * K
+                f.set_state("jump")
+        else:
+            f.vx = approach(f.vx, 0, 2000 * K * dt)
+            self.start_attack(f, at=(self.mouse["x"], self.mouse["y"]))
+
+    def _st_grabbed(self, f, dt, K):
+        f.x = lerp(f.x, f.gx, 1 - pow(.0008, dt))
+        f.y = lerp(f.y, f.gy, 1 - pow(.0008, dt))
+        f.vx = f.vy = 0
+        f.on_ground = False
+
+    def _st_thrown(self, f, dt, K):
+        f.tumble += f.vr * dt
+        if f.on_ground:
+            f.vr = f.tumble = 0
+            f.stun = .8
+            f.set_state("idle")
+            f.goal = self.time + 1.0
+            if f.stunt:
+                # he launched himself; landing is the good part
+                f.stunt = False
+                self.puff(f.x, f.y, 4, DUST, K, 10)
+                if f.hp > 0:
+                    f.set_mood("smug" if random.random() < .6 else "hyped")
+            else:
+                f.anger = clamp(f.anger + .3 * f.per["grudge"], 0, 1)
+                if f.hp > 0:
+                    f.set_mood("furious" if random.random() < .62 else "sulking")
+
+    STATES = {
+        "sleep": _st_sleep,
+        "ko": _st_ko,
+        "idle": _st_idle,
+        "walk": _st_walk,
+        "carry": _st_carry,
+        "blink": _st_blink,
+        "pogo": _st_pogo,
+        "skate": _st_skate,
+        "float": _st_float,
+        "jet": _st_jet,
+        "surf": _st_surf,
+        "ride": _st_ride,
+        "cannonwind": _st_cannonwind,
+        "fight": _st_fight,
+        "hunt": _st_hunt,
+        "jump": _st_airborne,
+        "fall": _st_airborne,
+        "ledge": _st_ledge,
+        "climb": _st_climb,
+        "wallslide": _st_wallslide,
+        "attack": _st_attack,
+        "hookfire": _st_hookfire,
+        "zip": _st_zip,
+        "taunt": _st_taunt,
+        "cursor": _st_cursor,
+        "grabbed": _st_grabbed,
+        "thrown": _st_thrown,
+    }
 
     # ==================================================================
     #  physics
@@ -3794,6 +4221,24 @@ class App:
     # ==================================================================
     #  global tick
     # ==================================================================
+    def terrain_changed(self):
+        """Re-point everyone at the terrain as it is now: targets by key, and
+        anyone standing on a window that got dragged rides along. `moved` is
+        consumed here, so a scan that changed nothing moves nobody twice."""
+        moved, self.terrain.moved = self.terrain.moved, {}
+        new = {(t["kind"], t["key"]): t for t in self.terrain.targets()}
+        for f in self.fighters:
+            if f.plat and f.plat[0] == "window" and f.plat[1] in moved:
+                dx, dy = moved[f.plat[1]]
+                f.x += dx
+                f.y += dy
+            if f.target:
+                key = (f.target["kind"], f.target["key"])
+                f.target = new.get(key)
+                if f.target is None and f.state == "hunt":
+                    f.set_state("idle")
+                    f.goal = self.time + .3
+
     def update(self, dt):
         self.time += dt
 
@@ -3819,19 +4264,9 @@ class App:
         if self.time - self.terrain.last > TERRAIN_HZ:
             self.terrain.last = self.time
             self.terrain.refresh(self.hwnd, want_icons=not self.asleep)
-            new = {(t["kind"], t["key"]): t for t in self.terrain.targets()}
-            for f in self.fighters:
-                # ride a window that got dragged
-                if f.plat and f.plat[0] == "window" and f.plat[1] in self.terrain.moved:
-                    dx, dy = self.terrain.moved[f.plat[1]]
-                    f.x += dx
-                    f.y += dy
-                if f.target:
-                    key = (f.target["kind"], f.target["key"])
-                    f.target = new.get(key)
-                    if f.target is None and f.state == "hunt":
-                        f.set_state("idle")
-                        f.goal = self.time + .3
+            self.terrain_changed()
+        if self.terrain.poll():
+            self.terrain_changed()        # a background scan just landed
 
         if CFG["react_to_windows"] and not self.asleep:
             fg = foreground_window()
@@ -4976,25 +5411,32 @@ class App:
 
     def run(self):
         last = time.perf_counter()
+        due = last                 # when the frame after this one should start
 
         def tick():
             if not self.running:
                 return
-            nonlocal last
+            nonlocal last, due
             now = time.perf_counter()
-            dt = min(now - last, .05)
+            # A deliberately slow tick (asleep, on battery) must not run the
+            # simulation in slow motion, so the cap follows the period.
+            dt = min(now - last, max(.05, self.frame_period() * 1.2))
             last = now
             self.tray.pump()
             self.tray.drain()      # menu actions, clear of the Win32 modal loop
             if not self.running:   # Quit is one of them
                 return
             try:
-                self.poll_cursor(dt)
-                if not self.paused:
-                    self.update(dt)
-                    self.draw()
-                elif self._pool:
-                    self.clear_canvas()
+                if now - self.env_at > TERRAIN_HZ:
+                    self.env_at = now
+                    self.check_environment()
+                if not self.held:
+                    self.poll_cursor(dt)
+                    if not self.paused:
+                        self.update(dt)
+                        self.draw()
+                    elif self._pool:
+                        self.clear_canvas()
             except Exception as exc:
                 if DEBUG:
                     import traceback
@@ -5007,7 +5449,14 @@ class App:
                     print("frame error:", exc)
                     if self._frame_errs == 20:
                         print("(more of the same; going quiet about it)")
-            self.root.after(max(8, int(1000 / CFG["fps"])), tick)
+            # Paced from a deadline, not from the end of the work. after(period)
+            # here used to add each frame's own cost to every gap, so 40 fps
+            # configured ran at about 32 with ten of them on screen.
+            due += self.frame_period()
+            done = time.perf_counter()
+            if due < done:
+                due = done         # fell behind: catch up, never pile up
+            self.root.after(max(1, int((due - done) * 1000 + .5)), tick)
 
         self.root.after(30, tick)
         self.root.mainloop()
@@ -5016,26 +5465,34 @@ class App:
 TERRAIN_HZ = 1.6
 
 
-def fatal(msg):
+def fatal(msg, icon=0x10):
     """Say it in a box. Launched with pythonw there is no console, and a
     crash that prints into the void looks like nothing happened at all."""
     print(msg)
     try:
-        user32.MessageBoxW(0, msg, "Desktop Gremlin", 0x10)
+        user32.MessageBoxW(0, msg, "Desktop Gremlin", icon)
     except Exception:
         pass
 
 
 def main():
     print("=" * 60)
-    print(f"  DESKTOP GREMLIN v{VERSION} — overlay edition")
+    print(f"  DESKTOP GREMLIN v{VERSION} — overlay edition   [{source_id()}]")
     print("=" * 60)
 
     start_log()
+    if not claim_instance():
+        fatal("Desktop Gremlin is already running.\n\n"
+              "Look for its icon in the tray, bottom-right: Settings, Pause "
+              "and Quit are on that menu.", icon=0x40)
+        return
     count_run()
     state = backup_layout()
     if state == "saved":
         print("  Saved your desktop icon layout to gremlin_icon_backup.json")
+    elif state == "kept":
+        print("  Last run left icons moved, so the layout backup from before that")
+        print("  is kept. Tray > Restore my icon layout puts them back.")
     elif state == "existing":
         print("  Icon layout backup already on file.")
     else:

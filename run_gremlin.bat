@@ -24,7 +24,7 @@ if not errorlevel 1 (
 rem One interpreter start does both jobs: proves pywin32 imports, and hands
 rem back the pythonw.exe sitting beside it. No output means the import failed.
 set "PYW="
-for /f "delims=" %%p in ('python -c "import sys, win32gui; print(sys.executable.replace('python.exe','pythonw.exe'))" 2^>nul') do set "PYW=%%p"
+for /f "delims=" %%p in ('python -c "import os, sys, win32gui; print(os.path.join(os.path.dirname(sys.executable), 'pythonw.exe'))" 2^>nul') do set "PYW=%%p"
 
 if not defined PYW (
   echo.
@@ -38,7 +38,7 @@ if not defined PYW (
     pause
     exit /b 1
   )
-  for /f "delims=" %%p in ('python -c "import sys, win32gui; print(sys.executable.replace('python.exe','pythonw.exe'))" 2^>nul') do set "PYW=%%p"
+  for /f "delims=" %%p in ('python -c "import os, sys, win32gui; print(os.path.join(os.path.dirname(sys.executable), 'pythonw.exe'))" 2^>nul') do set "PYW=%%p"
 )
 
 if not defined PYW set "PYW=pythonw"

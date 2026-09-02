@@ -33,6 +33,7 @@ CHECKS = [
     ("joints", "test_joints.py", "which way knees and elbows bow"),
     ("poses", "test_poses.py", "no broken limb in any pose"),
     ("diagnostics", "test_diagnostics.py", "logging and tray deferral"),
+    ("runtime", "test_runtime.py", "the loop, the lock, the hold, the ring"),
     ("icons", "test_icons.py", "shoving real desktop icons"),
     ("range", "test_weapon_range.py", "shots reaching their target"),
     ("rides", "test_rides.py", "joyrides start, travel, end clean"),

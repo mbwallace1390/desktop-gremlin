@@ -4,61 +4,22 @@ losing streak, ganging up, and the grudge against one icon.
 None of these fire reliably in a short random run, so each is forced and the
 spoken events are recorded.
 """
-import importlib.util
 import os
 import random
 import sys
 
-_TESTS = os.path.dirname(os.path.abspath(__file__))
-SRC = os.environ.get(
-    "GREMLIN_SRC",
-    os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
-HERE = os.path.join(_TESTS, ".tmp")          # scratch; never the repo itself
-os.makedirs(HERE, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("gm", SRC)
-gm = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gm)
-gm.MEMORY_PATH = os.path.join(HERE, "rt_memory.json")   # never the real one
-gm.MEM = gm.blank_memory()
-
-gm.CFG.update(gm.DEFAULTS)
-gm.CFG["crowd"] = 2
-gm.CFG["move_icons"] = False
-gm.CFG["sleep_when_idle"] = False
-gm.CFG["all_monitors"] = False
-gm.BACKUP_OK = False
-gm.idle_seconds = lambda: 0.0
+gm = harness.load("behaviour", crowd=2)
 gm.foreground_window = lambda: ("* notes.txt - Notepad", 4242)
 
 ICONS = [("Steam", 40, 60, 144, 124, 0), ("Recycle Bin", 200, 60, 304, 124, 1),
          ("Firefox", 360, 60, 464, 124, 2)]
 WINS = [("* notes.txt - Notepad", 300, 400, 1100, 900, 4242)]
 
-app = gm.App()
-app.poll_cursor = lambda dt: None
-
-
-def fake_refresh(own=0, want_icons=True):
-    t = app.terrain
-    t.icons, t.windows, t.moved = list(ICONS), list(WINS), {}
-    t.win_pos = {4242: (300, 400)}
-    t.icons_ok = True
-    tg, pl = [], []
-    for name, l, tp, r, b, idx in t.icons:
-        tg.append({"cx": (l + r) / 2, "cy": (tp + b) / 2, "top": tp, "name": name,
-                   "w": r - l, "h": b - tp, "kind": "icon", "key": idx})
-        pl.append((l, r, tp, "icon", idx))
-    for title, l, tp, r, b, h in t.windows:
-        tg.append({"cx": (l + r) / 2, "cy": tp + 16, "top": tp, "name": title,
-                   "w": r - l, "h": 32, "kind": "window", "key": h})
-        pl.append((l + 6, r - 6, tp, "window", h))
-    t._targets, t.platforms = tg, pl
-    t.bounds = [(x["cx"], x["cy"], x["w"] / 2, max(x["h"], 26) / 2, x) for x in tg]
-
-
-app.terrain.refresh = fake_refresh
-fake_refresh()
+app = harness.build(gm)
+harness.fake_terrain(app, ICONS, WINS)
 
 heard = []
 _real_yell = gm.Fighter.yell
@@ -165,12 +126,5 @@ for _ in range(600):
     app.root.update()
 print("600 more frames drawn : no exceptions")
 
-try:
-    app.tray.remove()
-    app.root.destroy()
-except Exception:
-    pass
-if os.path.exists(gm.MEMORY_PATH):
-    os.remove(gm.MEMORY_PATH)
 print("\n" + ("FAIL\n  " + "\n  ".join(bad) if bad else "PASS"))
-sys.exit(1 if bad else 0)
+harness.finish(gm, app, bad)

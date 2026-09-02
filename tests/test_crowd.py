@@ -16,30 +16,15 @@ left nine fighters' worth of items in it forever; and aim_point dereferenced
 f.foe before testing it, which was unreachable with a fixed pair and live the
 moment foes are reassigned.
 """
-import importlib.util
 import os
 import random
 import sys
 import time
 
-_TESTS = os.path.dirname(os.path.abspath(__file__))
-SRC = os.environ.get(
-    "GREMLIN_SRC",
-    os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
-HERE = os.path.join(_TESTS, ".tmp")
-os.makedirs(HERE, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("gm", SRC)
-gm = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gm)
-gm.MEMORY_PATH = os.path.join(HERE, "crowd_memory.json")
-gm.MEM = gm.blank_memory()
-gm.CFG.update(gm.DEFAULTS)
-gm.CFG["sleep_when_idle"] = False
-gm.CFG["all_monitors"] = False
-gm.CFG["move_icons"] = False
-gm.CFG["chaos"] = 2.0
-gm.idle_seconds = lambda: 0.0
+gm = harness.load("crowd", chaos=2.0)
 
 DT = 1 / 40.0
 bad = []
@@ -50,27 +35,11 @@ if set(gm.MEM["who"]) != set(gm.ROSTER):
                % sorted(set(gm.MEM["who"]) ^ set(gm.ROSTER)))
 
 gm.CFG["crowd"] = 1
-app = gm.App()
-app.poll_cursor = lambda dt: None
+app = harness.build(gm)
 
 ICONS = [("Icon %d" % i, 60 + (i % 8) * 120, 200 + (i // 8) * 150,
           124 + (i % 8) * 120, 264 + (i // 8) * 150, i) for i in range(16)]
-
-
-def refresh(own=0, want_icons=True):
-    t = app.terrain
-    t.icons, t.windows, t.moved, t.win_pos, t.icons_ok = list(ICONS), [], {}, {}, True
-    tg, pl = [], []
-    for name, l, tp, r, b, idx in t.icons:
-        tg.append({"cx": (l + r) / 2, "cy": (tp + b) / 2, "top": tp, "name": name,
-                   "w": r - l, "h": b - tp, "kind": "icon", "key": idx})
-        pl.append((l, r, tp, "icon", idx))
-    t._targets, t.platforms = tg, pl
-    t.bounds = [(x["cx"], x["cy"], x["w"] / 2, max(x["h"], 26) / 2, x) for x in tg]
-
-
-app.terrain.refresh = refresh
-refresh()
+harness.fake_terrain(app, ICONS)
 
 # --- 1. every count runs, and leaves nobody fighting a ghost ---------------
 print("%-6s %-6s %-9s %s" % ("crowd", "alive", "frames", "outcome"))
@@ -222,18 +191,11 @@ print("canvas items at ten   : %d" % len(app.canvas.find_all()))
 if ms > budget * 0.5:
     bad.append("ten of them cost %.1f ms of a %.0f ms budget" % (ms, budget))
 
-try:
-    app.tray.remove()
-    app.root.destroy()
-except Exception:
-    pass
-if os.path.exists(gm.MEMORY_PATH):
-    os.remove(gm.MEMORY_PATH)
-
 print("")
 if bad:
     print("FAIL")
     for b in bad[:15]:
         print("  " + b)
-    sys.exit(1)
-print("PASS")
+else:
+    print("PASS")
+harness.finish(gm, app, bad)

@@ -15,33 +15,15 @@ the fix: every chainsaw swing and 9 in 10 sword swings thrown from outside
 their own reach, and only lightning -- which is instant, and only ever fired
 when it was also the plan -- reliably connected.
 """
-import importlib.util
 import os
 import random
 import sys
 
-_TESTS = os.path.dirname(os.path.abspath(__file__))
-SRC = os.environ.get(
-    "GREMLIN_SRC",
-    os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
-HERE = os.path.join(_TESTS, ".tmp")          # scratch; never the repo itself
-os.makedirs(HERE, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("gm", SRC)
-gm = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gm)
-gm.MEMORY_PATH = os.path.join(HERE, "fight_memory.json")
-gm.MEM = gm.blank_memory()
-gm.CFG.update(gm.DEFAULTS)
-gm.CFG["crowd"] = 2
-gm.CFG["sleep_when_idle"] = False
-gm.CFG["all_monitors"] = False
-gm.CFG["move_icons"] = False
-gm.CFG["chaos"] = 2.0                        # more fights per minute
-gm.idle_seconds = lambda: 0.0
-
-app = gm.App()
-app.poll_cursor = lambda dt: None
+gm = harness.load("fight", crowd=2, chaos=2.0)     # chaos: more fights per minute
+app = harness.build(gm)
 a, b = app.fighters
 GROUND = app.ground_at(900)
 
@@ -50,22 +32,7 @@ ICONS = []
 for i in range(10):
     x = 500 + i * 100
     ICONS.append(("Icon %d" % i, x, int(GROUND) - 120, x + 64, int(GROUND) - 56, i))
-
-
-def refresh(own=0, want_icons=True):
-    t = app.terrain
-    t.icons, t.windows, t.moved, t.win_pos, t.icons_ok = list(ICONS), [], {}, {}, True
-    tg, pl = [], []
-    for name, l, tp, r, bo, idx in t.icons:
-        tg.append({"cx": (l + r) / 2, "cy": (tp + bo) / 2, "top": tp, "name": name,
-                   "w": r - l, "h": bo - tp, "kind": "icon", "key": idx})
-        pl.append((l, r, tp, "icon", idx))
-    t._targets, t.platforms = tg, pl
-    t.bounds = [(x["cx"], x["cy"], x["w"] / 2, max(x["h"], 26) / 2, x) for x in tg]
-
-
-app.terrain.refresh = refresh
-refresh()
+harness.fake_terrain(app, ICONS)
 
 fired = []
 _start = app.start_attack
@@ -142,13 +109,5 @@ if mismatch:
 if whiff:
     bad.append("%d attacks were thrown from outside their own reach" % len(whiff))
 
-try:
-    app.tray.remove()
-    app.root.destroy()
-except Exception:
-    pass
-if os.path.exists(gm.MEMORY_PATH):
-    os.remove(gm.MEMORY_PATH)
-
 print("\n" + ("FAIL\n  " + "\n  ".join(bad) if bad else "PASS"))
-sys.exit(1 if bad else 0)
+harness.finish(gm, app, bad)

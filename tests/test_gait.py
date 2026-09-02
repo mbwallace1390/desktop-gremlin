@@ -5,30 +5,14 @@ maths, so it tests what is drawn. A correct walk: the foot that is planted
 travels BACKWARD relative to the body (that is what pushes it along), and the
 lifted foot swings forward. The reverse reads as running backwards.
 """
-import importlib.util
 import os
 import sys
 
-_TESTS = os.path.dirname(os.path.abspath(__file__))
-SRC = os.environ.get(
-    "GREMLIN_SRC",
-    os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
-HERE = os.path.join(_TESTS, ".tmp")          # scratch; never the repo itself
-os.makedirs(HERE, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("gm", SRC)
-gm = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gm)
-gm.MEMORY_PATH = os.path.join(HERE, "gait_memory.json")
-gm.MEM = gm.blank_memory()
-gm.CFG.update(gm.DEFAULTS)
-gm.CFG["crowd"] = 1
-gm.CFG["sleep_when_idle"] = False
-gm.CFG["all_monitors"] = False
-gm.idle_seconds = lambda: 0.0
-
-app = gm.App()
-app.poll_cursor = lambda dt: None
+gm = harness.load("gait", crowd=1)
+app = harness.build(gm)
 f = app.fighters[0]
 
 
@@ -85,11 +69,4 @@ else:
     print("VERDICT: BACKWARDS - the planted foot is sliding forwards")
     ok = False
 
-try:
-    app.tray.remove()
-    app.root.destroy()
-except Exception:
-    pass
-if os.path.exists(gm.MEMORY_PATH):
-    os.remove(gm.MEMORY_PATH)
-sys.exit(0 if ok else 1)
+harness.finish(gm, app, not ok)

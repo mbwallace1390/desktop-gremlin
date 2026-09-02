@@ -10,31 +10,15 @@ Human reference, facing +x:
 A knee that bows backward is a bird's leg and reads as running the other way.
 An average hides a sign flip mid-stride, so this reports every sample.
 """
-import importlib.util
 import math
 import os
 import sys
 
-_TESTS = os.path.dirname(os.path.abspath(__file__))
-SRC = os.environ.get(
-    "GREMLIN_SRC",
-    os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
-HERE = os.path.join(_TESTS, ".tmp")          # scratch; never the repo itself
-os.makedirs(HERE, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("gm", SRC)
-gm = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gm)
-gm.MEMORY_PATH = os.path.join(HERE, "knee_memory.json")
-gm.MEM = gm.blank_memory()
-gm.CFG.update(gm.DEFAULTS)
-gm.CFG["crowd"] = 1
-gm.CFG["sleep_when_idle"] = False
-gm.CFG["all_monitors"] = False
-gm.idle_seconds = lambda: 0.0
-
-app = gm.App()
-app.poll_cursor = lambda dt: None
+gm = harness.load("joints", crowd=1)
+app = harness.build(gm)
 f = app.fighters[0]
 
 
@@ -104,11 +88,4 @@ for name in ("leg L", "leg R", "arm L", "arm R"):
 print()
 print("VERDICT: %s" % ("knees lead, elbows trail - correct" if ok
                        else "a joint bows the wrong way somewhere in the stride"))
-try:
-    app.tray.remove()
-    app.root.destroy()
-except Exception:
-    pass
-if os.path.exists(gm.MEMORY_PATH):
-    os.remove(gm.MEMORY_PATH)
-sys.exit(0 if ok else 1)
+harness.finish(gm, app, not ok)

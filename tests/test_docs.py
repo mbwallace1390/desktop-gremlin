@@ -80,11 +80,12 @@ if "1 to 10" not in readme and "one to ten" not in readme.lower():
 count = len([f for f in os.listdir(_TESTS)
              if f.startswith("test_") and f.endswith(".py")])
 words = {10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen",
-         14: "fourteen", 15: "fifteen"}
+         14: "fourteen", 15: "fifteen", 16: "sixteen", 17: "seventeen",
+         18: "eighteen", 19: "nineteen", 20: "twenty"}
 word = words.get(count, str(count))
 for doc, text in (("README.md", readme), ("CLAUDE.md", claude)):
-    claimed = re.search(r"\b(ten|eleven|twelve|thirteen|fourteen|fifteen)"
-                        r" checks\b", text, re.I)
+    claimed = re.search(r"\b(%s|\d+) checks\b" % "|".join(words.values()),
+                        text, re.I)
     if not claimed:
         bad.append("%s does not say how many checks there are" % doc)
     elif claimed.group(1).lower() != word:

@@ -362,7 +362,7 @@ screenshot.
 python tests\run_all.py
 ```
 
-Seventeen checks, a few seconds, nothing to install. They drive the real app
+Eighteen checks, a few seconds, nothing to install. They drive the real app
 with the Windows shell stubbed out, so they never touch your desktop. Every one
 of them encodes a bug that actually shipped. The same checks run on every push
 in GitHub Actions, on a Windows runner.

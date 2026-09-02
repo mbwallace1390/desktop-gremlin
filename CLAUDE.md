@@ -10,7 +10,7 @@ Windows only — it talks to the Explorer shell directly.
 python tests\run_all.py
 ```
 
-Seventeen checks, a few seconds, nothing to install. Each one encodes a bug that
+Eighteen checks, a few seconds, nothing to install. Each one encodes a bug that
 actually shipped. They build a real Tk window and a real `App`, so windows
 flash on screen while they run; none of them touch your desktop icons, because
 the shell is stubbed out. `.github/workflows/checks.yml` runs the same command
@@ -175,6 +175,16 @@ with most of their life left. Raising the lifetime, the obvious move, did
 nothing for either; cutting gravity did. `tests/test_weapon_range.py` holds the
 line at 1.5x, and judges lobs (bow, bomb) on whether they land instead, because
 a good lob is 1.0x by construction.
+
+**A round leaves the weapon as drawn, because the muzzle shares the drawing's
+arithmetic.** `attack_pose(f)` is the stance, `frame(f)` the body transform,
+and `muzzle(f)` runs the same elbow `ik` and the same `MUZZLE_TIP` length along
+the forearm that `draw_weapon` draws. Three earlier muzzles modelled the pose
+instead -- shoulder, hand, idealised ray -- and each sat a few pixels off every
+barrel. `tests/test_muzzle.py` reads the drawn tip back off the canvas (the
+furthest weapon point along the aim) and holds every shooter, both facings,
+squashed and tumbling, to 4px. If a pose or a barrel length changes, change
+it in the shared place and the check says whether it still lines up.
 
 **Every new drawing call has to pick a layer.** Canvas items are pooled and
 reused rather than recreated, and Tk draws in creation order, so stacking comes

@@ -36,6 +36,7 @@ CHECKS = [
     ("runtime", "test_runtime.py", "the loop, the lock, the hold, the ring"),
     ("icons", "test_icons.py", "shoving real desktop icons"),
     ("range", "test_weapon_range.py", "shots reaching their target"),
+    ("muzzle", "test_muzzle.py", "rounds leaving the end of the barrel"),
     ("rides", "test_rides.py", "joyrides start, travel, end clean"),
     ("windows", "test_windows.py", "hanging, sitting, knocking on your window"),
     ("fight", "test_fight_choice.py", "firing the weapon he closed for"),

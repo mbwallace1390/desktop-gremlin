@@ -1663,6 +1663,12 @@ ATKDUR = {"sword": .42, "bow": .85, "blaster": .75, "bomb": .60,
           "fish": .48, "pan": .40, "confetti": .55, "balloon": .60,
           "harpoon": .70, "magnet": .65, "blackhole": .60, "anvil": .75,
           "piano": .75, "peel": .55, "spring": .60}
+# How far into the swing the round leaves, as a fraction of ATKDUR. Guns fire
+# just past the halfway kick. The thrown things arc the hand up and over from
+# behind the head, and leave when it is out in FRONT -- at .55 they left from
+# behind the ear.
+RELEASE_AT = {"bomb": .80, "balloon": .80, "blackhole": .80, "peel": .80,
+              "spring": .80}
 # How far off he opens fire. A round has to comfortably outrun the number here
 # or it dies in the air, and the minigun needs the widest margin of the lot
 # because it streams for 1.4s while both of them keep moving. Measured before
@@ -1676,11 +1682,14 @@ REACH = {"sword": 40, "bow": 480, "blaster": 420, "bomb": 230,
          "piano": 300, "peel": 120, "spring": 120}
 MELEE = ("sword", "chainsaw", "fish", "pan")
 MELEE_DMG = {"sword": 16, "chainsaw": 9, "fish": 12, "pan": 13}
-# How far each barrel reaches past the hand, in the same local units the
-# draw code uses -- the round should leave the END of the weapon, and these
-# mirror the furthest rel() point draw_weapon puts on the canvas for it.
+# How far each weapon reaches past the hand along the forearm, in the same
+# local units draw_weapon uses -- the round leaves the END of the weapon, and
+# these mirror the furthest rel() point draw_weapon puts on the canvas for it.
+# The thrown things leave from where they are drawn in the hand. The bow is
+# not here: the arrow leaves the bow in the front hand (see muzzle).
 MUZZLE_TIP = {"blaster": 20, "lightning": 24, "minigun": 26, "rocket": 30,
-              "harpoon": 32, "magnet": 14, "confetti": 19, "blackhole": 12}
+              "harpoon": 34, "magnet": 14, "confetti": 24, "blackhole": 12,
+              "bomb": 12, "balloon": 12, "peel": 10, "spring": 10}
 # The four families beyond plain guns, so the code can ask what a weapon IS
 # instead of listing names at every site.
 PULLERS = ("harpoon", "magnet")           # hits drag the victim closer
@@ -3583,21 +3592,32 @@ class App:
         f.set_state("attack")
 
     def muzzle(self, f):
-        """Where a round leaves: the END of the weapon in the hand. The
-        attack poses hold the hand at local (-44, radius ~35) and each barrel
-        runs MUZZLE_TIP further along the aim. For a whole release every shot
-        spawned from the shoulder at (-58, 26) instead -- visibly above every
-        gun -- and the first fix stopped at the hand, visibly short of every
-        barrel. If the poses move, this moves with them."""
-        r = (34 + MUZZLE_TIP.get(f.weapon, 0)) * f.sc
-        # -37, not the hand's -44: the barrels are drawn along the forearm,
-        # which droops below the aim ray. Measured against the rendered tips
-        # (blaster -7.4px, harpoon -8.7px before this constant existed).
-        return (f.x + math.cos(f.aim) * r,
-                f.y - 37 * f.sc + math.sin(f.aim) * r)
+        """Where a round leaves: the END of the weapon as it is drawn. The
+        same stance (attack_pose), the same elbow (ik), the same barrel
+        (MUZZLE_TIP mirrors the furthest point draw_weapon puts on the canvas)
+        and the same body transform (frame) as the drawing, so if a pose moves
+        this moves with it. Three earlier versions modelled the pose instead of
+        sharing it -- from the shoulder, then from the hand, then along an
+        idealised aim ray -- and each sat a few pixels off every barrel, so
+        the round appeared beside the gun. tests/test_muzzle.py reads the drawn
+        tip back off the canvas and holds this to 4px.
 
-    def shoot(self, f, kind, speed, grav, life, extra=None):
-        hx, hy = self.muzzle(f)
+        The bow is the odd one out: the arrow leaves the bow, which is in the
+        FRONT hand, from the middle of its curve."""
+        px, py, lean, _fL, _fR, hL, hR = self.attack_pose(f)
+        P = self.frame(f)
+        if f.weapon == "bow":
+            aim = math.atan2(hL[1] - hR[1], hL[0] - hR[0])
+            return P(hL[0] + math.cos(aim) * 20, hL[1] + math.sin(aim) * 20)
+        nx, ny = rot(0, -26, lean)
+        neck = (px + nx, py + ny)
+        elb = ik(neck[0], neck[1] - 1, hR[0], hR[1], 13, 13, 1)
+        a = math.atan2(hR[1] - elb[1], hR[0] - elb[0])
+        tx, ty = rot(MUZZLE_TIP.get(f.weapon, 0), 0, a)
+        return P(hR[0] + tx, hR[1] + ty)
+
+    def shoot(self, f, kind, speed, grav, life, extra=None, at=None):
+        hx, hy = at if at is not None else self.muzzle(f)
         k = f.K()
         s = {"k": kind, "x": hx, "y": hy, "owner": f,
              "vx": math.cos(f.aim) * speed * k, "vy": math.sin(f.aim) * speed * k,
@@ -3622,13 +3642,7 @@ class App:
             self.shoot(f, "laser", 900, 0, 1.4)
             self.spark(*self.muzzle(f), 5, LASER, 180, k)
         elif w == "bomb":
-            hx, hy = self.muzzle(f)
-            self.shots.append({"k": "bomb", "x": hx, "y": hy, "owner": f,
-                               "vx": math.cos(f.aim) * 430 * k,
-                               "vy": math.sin(f.aim) * 430 * k - 240 * k,
-                               "g": 900 * k, "life": 2.2, "trail": [],
-                               "spin": 0.0, "pierce": f.shot_pierce,
-                               "tgt": f.shot_tgt})
+            self.lob(f, "bomb")
         elif w == "rocket":
             # Same disease the minigun had: gravity, not lifetime, was
             # what stopped these. Aimed three degrees down from a muzzle
@@ -3660,20 +3674,15 @@ class App:
             self.shake(.14, 5 * k)
         elif w == "confetti":
             base = f.aim
+            hx, hy = self.muzzle(f)         # one barrel; the spread is in the aim
             for _ in range(7):
                 f.aim = base + random.uniform(-.24, .24)
                 self.shoot(f, "confetti", 780, 25, .75,
-                           extra={"col": random.choice(CONFETTI_COLS)})
+                           extra={"col": random.choice(CONFETTI_COLS)}, at=(hx, hy))
             f.aim = base
-            self.spark(*self.muzzle(f), 6, random.choice(CONFETTI_COLS), 200, k)
+            self.spark(hx, hy, 6, random.choice(CONFETTI_COLS), 200, k)
         elif w == "balloon":
-            hx, hy = self.muzzle(f)
-            self.shots.append({"k": "wballoon", "x": hx, "y": hy, "owner": f,
-                               "vx": math.cos(f.aim) * 430 * k,
-                               "vy": math.sin(f.aim) * 430 * k - 240 * k,
-                               "g": 900 * k, "life": 2.2, "trail": [],
-                               "spin": 0.0, "pierce": f.shot_pierce,
-                               "tgt": f.shot_tgt})
+            self.lob(f, "wballoon")
         elif w == "harpoon":
             self.shoot(f, "harpoon", 800, 8, 1.4)
             self.shake(.10, 3 * k)
@@ -3681,13 +3690,7 @@ class App:
             self.shoot(f, "magnet", 780, 0, 1.2)
             self.spark(*self.muzzle(f), 4, "#E05A3A", 160, k)
         elif w == "blackhole":
-            hx, hy = self.muzzle(f)
-            self.shots.append({"k": "blackhole", "x": hx, "y": hy, "owner": f,
-                               "vx": math.cos(f.aim) * 430 * k,
-                               "vy": math.sin(f.aim) * 430 * k - 240 * k,
-                               "g": 900 * k, "life": 2.2, "trail": [],
-                               "spin": 0.0, "pierce": f.shot_pierce,
-                               "tgt": f.shot_tgt})
+            self.lob(f, "blackhole")
         elif w in DROPPERS:
             # Delivered from the sky, straight down onto where he is looking.
             # pierce is free here -- nothing on the way matters but the target.
@@ -3698,13 +3701,35 @@ class App:
                                "g": 1500 * k, "life": 3.0, "trail": [],
                                "spin": 0.0, "pierce": True, "tgt": f.shot_tgt})
         elif w in TRAPS:
-            # tossed a short way ahead; becomes a ground prop where it lands
-            self.shots.append({"k": w, "x": f.x + f.face * 14 * f.sc,
-                               "y": f.y - 60 * f.sc, "owner": f,
+            # tossed a short way ahead, from the hand it is drawn in; becomes
+            # a ground prop where it lands
+            hx, hy = self.muzzle(f)
+            self.shots.append({"k": w, "x": hx, "y": hy, "owner": f,
                                "vx": math.cos(f.aim) * 360 * k,
                                "vy": math.sin(f.aim) * 360 * k - 200 * k,
                                "g": 900 * k, "life": 2.0, "trail": [],
                                "spin": 0.0, "pierce": True, "tgt": None})
+
+    def lob(self, f, kind):
+        """Throw something from the hand onto where he is looking. The angle
+        comes from where it actually leaves (the muzzle, wherever the swing has
+        put the hand) to the aim point, the way the bow already aims, so the
+        throw lands whatever the release point. A fixed velocity plus an
+        upward kick used to be the throw; moving the spawn to the drawn hand
+        then put every lob short, because the hand is higher and further back
+        than the idealised muzzle was. 45 degrees, as far as it goes, when the
+        target is out of range."""
+        k = f.K()
+        hx, hy = self.muzzle(f)
+        tx, ty = self.aim_point(f)
+        v, g = 650 * k, 900 * k
+        ang = lob_angle(tx - hx, ty - hy, v, g)
+        if ang is None:
+            ang = math.atan2(-1, 1 if tx >= hx else -1)
+        self.shots.append({"k": kind, "x": hx, "y": hy, "owner": f,
+                           "vx": math.cos(ang) * v, "vy": math.sin(ang) * v,
+                           "g": g, "life": 2.2, "trail": [], "spin": 0.0,
+                           "pierce": f.shot_pierce, "tgt": f.shot_tgt})
 
     def aim_point(self, f):
         # The foe test has to come first. It used to read `f.state == "fight" or
@@ -4554,7 +4579,7 @@ class App:
                     self.melee_hit(f, 96)
                     self.spark(f.x + f.face * 30 * f.sc, f.y - 34 * f.sc,
                                4, "#FFE7A8", 200, K)
-        elif not f.fired and k > .55:
+        elif not f.fired and k > RELEASE_AT.get(f.weapon, .55):
             f.fired = True
             self.release_attack(f)
         f.vx = approach(f.vx, 0, 2200 * K * dt)
@@ -5457,6 +5482,67 @@ class App:
         self._frame_end()
 
     # ---- the figure ------------------------------------------------------
+    def frame(self, f):
+        """Body-local units to the screen: the way he faces, his size, the
+        landing squash and the tumble. One function for the drawing and for
+        muzzle(), so a round leaves the weapon as it is actually drawn."""
+        S = f.sc
+        sqx = 1 + f.squash * .22
+        sqy = 1 - f.squash * .28
+        fx, fy = f.face * S * sqx, S * sqy
+        ca, sa = math.cos(f.tumble), math.sin(f.tumble)
+
+        def P(lx, ly):
+            X, Y = lx * fx, ly * fy
+            return f.x + X * ca - Y * sa, f.y + X * sa + Y * ca
+        return P
+
+    def attack_pose(self, f):
+        """The stance for this weapon at this moment of the swing:
+        (px, py, lean, fL, fR, hL, hR), body-local. Shared by draw_fighter
+        and muzzle(): the two used to be separate arithmetic, and every barrel
+        sat a few pixels from where its rounds appeared."""
+        k = clamp(f.atk / f.atk_dur, 0, 1)
+        aimL = math.atan2(math.sin(f.aim), math.cos(f.aim) * f.face)
+        px, py, lean = 0.0, -30, .12
+        fL, fR = (-12, 0), (14, 0)
+        w = f.weapon
+        if w in ("sword", "fish", "pan"):
+            sw = lerp(-2.2, -2.6, k / .55) if k < .55 else lerp(-2.6, .9, (k - .55) / .45)
+            hR = (math.cos(sw) * 30 + 8, math.sin(sw) * 30 - 48)
+            hL = (-14, -44)
+            lean = .3 if k > .55 else -.12
+        elif w == "chainsaw":
+            r = 30 + math.sin(self.time * 26) * 2
+            hR = (math.cos(aimL) * r + 6, -44 + math.sin(aimL) * r)
+            hL = (math.cos(aimL) * 16 - 6, -40 + math.sin(aimL) * 16)
+            lean = .22
+        elif w == "bow":
+            draw = k / .55 if k < .55 else 0
+            hL = (math.cos(aimL) * 33 + 4, -45 + math.sin(aimL) * 33)
+            hR = (math.cos(aimL) * (19 - draw * 13) + 4,
+                  -45 + math.sin(aimL) * (19 - draw * 13))
+        elif w in ("blaster", "lightning", "confetti", "harpoon", "magnet"):
+            kick = -7 if .55 < k < .7 else 0
+            hR = (math.cos(aimL) * (35 + kick) + 4, -44 + math.sin(aimL) * (35 + kick))
+            hL = (math.cos(aimL) * 20 - 3, -42 + math.sin(aimL) * 20)
+        elif w in ("rocket", "minigun"):
+            rec = math.sin(self.time * 40) * (3 if w == "minigun" else 0)
+            hR = (math.cos(aimL) * (34 - rec) + 6, -46 + math.sin(aimL) * (34 - rec))
+            hL = (math.cos(aimL) * 14 - 8, -36 + math.sin(aimL) * 14)
+            lean = .18
+        else:  # bomb and the rest of the thrown things: up and over, clear of his own head
+            if k < .55:
+                u = k / .55
+                hR = (lerp(8, -30, u), lerp(-48, -58, u))
+                lean = lerp(.10, -.16, u)
+            else:
+                u = (k - .55) / .45
+                hR = (lerp(-30, 42, u), lerp(-58, -56, u) - 16 * math.sin(math.pi * u))
+                lean = lerp(-.16, .30, u)
+            hL = (-14, -42)
+        return px, py, lean, fL, fR, hL, hR
+
     def draw_fighter(self, f, fi):
         tb, th, tf, ta, tw, twd = self._ftag[fi][:6]
         S = f.sc
@@ -5664,45 +5750,7 @@ class App:
             hL = (-10, -34)
             tilt = math.sin(k * .5) * .12
         elif st == "attack":
-            k = clamp(f.atk / f.atk_dur, 0, 1)
-            aimL = math.atan2(math.sin(f.aim), math.cos(f.aim) * f.face)
-            py, lean = -30, .12
-            fL, fR = (-12, 0), (14, 0)
-            w = f.weapon
-            if w in ("sword", "fish", "pan"):
-                sw = lerp(-2.2, -2.6, k / .55) if k < .55 else lerp(-2.6, .9, (k - .55) / .45)
-                hR = (math.cos(sw) * 30 + 8, math.sin(sw) * 30 - 48)
-                hL = (-14, -44)
-                lean = .3 if k > .55 else -.12
-            elif w == "chainsaw":
-                r = 30 + math.sin(self.time * 26) * 2
-                hR = (math.cos(aimL) * r + 6, -44 + math.sin(aimL) * r)
-                hL = (math.cos(aimL) * 16 - 6, -40 + math.sin(aimL) * 16)
-                lean = .22
-            elif w == "bow":
-                draw = k / .55 if k < .55 else 0
-                hL = (math.cos(aimL) * 33 + 4, -45 + math.sin(aimL) * 33)
-                hR = (math.cos(aimL) * (19 - draw * 13) + 4,
-                      -45 + math.sin(aimL) * (19 - draw * 13))
-            elif w in ("blaster", "lightning", "confetti", "harpoon", "magnet"):
-                kick = -7 if .55 < k < .7 else 0
-                hR = (math.cos(aimL) * (35 + kick) + 4, -44 + math.sin(aimL) * (35 + kick))
-                hL = (math.cos(aimL) * 20 - 3, -42 + math.sin(aimL) * 20)
-            elif w in ("rocket", "minigun"):
-                rec = math.sin(self.time * 40) * (3 if w == "minigun" else 0)
-                hR = (math.cos(aimL) * (34 - rec) + 6, -46 + math.sin(aimL) * (34 - rec))
-                hL = (math.cos(aimL) * 14 - 8, -36 + math.sin(aimL) * 14)
-                lean = .18
-            else:  # bomb — the hand arcs up and over, clear of his own head
-                if k < .55:
-                    u = k / .55
-                    hR = (lerp(8, -30, u), lerp(-48, -58, u))
-                    lean = lerp(.10, -.16, u)
-                else:
-                    u = (k - .55) / .45
-                    hR = (lerp(-30, 42, u), lerp(-58, -56, u) - 16 * math.sin(math.pi * u))
-                    lean = lerp(-.16, .30, u)
-                hL = (-14, -42)
+            px, py, lean, fL, fR, hL, hR = self.attack_pose(f)
         else:  # idle
             br = math.sin(self.time * 2.1) * 1.4
             py = -30 + br * .5
@@ -5728,15 +5776,7 @@ class App:
         if f.stun > 0:
             tilt += math.sin(self.time * 30) * .1
 
-        sqx = 1 + f.squash * .22
-        sqy = 1 - f.squash * .28
-        fx, fy = f.face * S * sqx, S * sqy
-        ca, sa = math.cos(f.tumble), math.sin(f.tumble)
-
-        def P(lx, ly):
-            X, Y = lx * fx, ly * fy
-            return f.x + X * ca - Y * sa, f.y + X * sa + Y * ca
-
+        P = self.frame(f)
         nx, ny = rot(0, -26, lean)
         neck = (px + nx, py + ny)
         hx2, hy2 = rot(0, -11, lean + tilt)

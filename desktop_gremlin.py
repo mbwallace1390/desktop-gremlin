@@ -4863,7 +4863,8 @@ class App:
             if fg and fg[1] != (self.fg[1] if self.fg else None):
                 self.fg = fg
                 awake = [f for f in self.fighters
-                         if f.state in ("idle", "walk", "taunt", "hunt")]
+                         if f.state in ("idle", "walk", "taunt", "hunt")
+                         or f.state in PLAY_STATES]
                 if awake and fg[0] and random.random() < .55:
                     f = random.choice(awake)
                     if self.time - f.said > 5:
@@ -4888,8 +4889,12 @@ class App:
                 # "fight" is circling between swings, which is fine to talk
                 # through. Without it, a crowd all brawling at once means the
                 # remark never finds a speaker and the feature goes silent.
+                # ...and so is sitting on the window in question: with the
+                # magnet drawing them there, everyone on it counted as busy
+                # and the remark never found a mouth
                 free = [f for f in self.fighters
-                        if f.state in ("idle", "walk", "taunt", "hunt", "fight")]
+                        if f.state in ("idle", "walk", "taunt", "hunt", "fight")
+                        or f.state in PLAY_STATES]
                 if free:
                     f = random.choice(free)
                     f.said = self.time

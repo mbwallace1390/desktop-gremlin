@@ -5476,11 +5476,11 @@ def fatal(msg, icon=0x10):
 
 
 def main():
+    start_log()      # before the banner, or under pythonw it goes nowhere
     print("=" * 60)
     print(f"  DESKTOP GREMLIN v{VERSION} — overlay edition   [{source_id()}]")
     print("=" * 60)
 
-    start_log()
     if not claim_instance():
         fatal("Desktop Gremlin is already running.\n\n"
               "Look for its icon in the tray, bottom-right: Settings, Pause "

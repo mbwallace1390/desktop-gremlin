@@ -181,5 +181,60 @@ print("sleep mid-ride        : state %r, fields clean=%s" % (f.state, clean))
 if not clean:
     bad.append("sleep left ride fields dangling (state %s)" % f.state)
 
+# --- an interrupted grapple leaves no rope ---------------------------------
+# The zip rope was drawn for as long as f.zip was set, and only the zip's own
+# end cleared it: hit or grabbed mid-swing, he ran and jumped about with the
+# line still tied to him. Read off the canvas: rope items in use after a draw.
+
+
+def rope_items():
+    app.draw()
+    return sum(app._used.get(tag, {}).get(kind, 0)
+               for tag in app._rtag[0] for kind in app._used.get(tag, {}))
+
+
+gm.CFG["sleep_when_idle"] = False
+gm.idle_seconds = lambda: 0.0
+app.asleep = False
+other = app.fighters[1]
+print("")
+for how in ("hit while zipping", "grabbed while zipping",
+            "hit while the hook flies", "sleep while zipping"):
+    random.seed(37)
+    for g in app.fighters:
+        park(g)
+    app.fire_hook(f, 1300.0, app.ground_at(1300) - 260)
+    if "hook flies" in how:
+        app.update(DT)
+        app.update(DT)
+    else:
+        for _ in range(40):
+            app.update(DT)
+            if f.state == "zip":
+                break
+    flying = f.state in ("hookfire", "zip") and rope_items() > 0
+    if how.startswith("hit"):
+        app.hit_fighter(other, f, 10)
+    elif how.startswith("grabbed"):
+        app.on_down(type("E", (), {"x": f.x - app.ox, "y": f.y - 40 * f.sc - app.oy})())
+    else:
+        gm.CFG["sleep_when_idle"] = True
+        gm.idle_seconds = lambda: 1e9
+        app.update(DT)
+        gm.CFG["sleep_when_idle"] = False
+        gm.idle_seconds = lambda: 0.0
+        app.asleep = False
+    for _ in range(20):
+        app.update(DT)
+    rope = rope_items()
+    print("%-26s: rope while flying %s, after %d items, fields %s/%s, state %s"
+          % (how, flying, rope, f.hook, f.zip, f.state))
+    if not flying:
+        bad.append("%s: the grapple never flew, so nothing was tested" % how)
+    if rope or f.hook is not None or f.zip is not None:
+        bad.append("%s: the rope stayed tied to him" % how)
+    if how.startswith("grabbed"):
+        app.on_up(None)
+
 print("\n" + ("FAIL\n  " + "\n  ".join(bad) if bad else "PASS"))
 harness.finish(gm, app, bad)

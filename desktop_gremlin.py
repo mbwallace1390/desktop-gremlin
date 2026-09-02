@@ -2396,6 +2396,11 @@ class Fighter:
             # grabbed, thrown, a fight, sleep: he lets go of the window plan
             # here, the one place every state change passes through
             self.play = None
+        if s not in ("hookfire", "zip"):
+            # ...and of the grapple line. Only the zip's own end used to clear
+            # it, so a hit or a grab mid-swing left the rope drawn on him
+            # while he ran and jumped about.
+            self.hook = self.zip = None
         self.state, self.st = s, 0.0
 
     def set_mood(self, m, quiet=False):

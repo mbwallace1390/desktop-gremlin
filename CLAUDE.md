@@ -10,7 +10,7 @@ Windows only — it talks to the Explorer shell directly.
 python tests\run_all.py
 ```
 
-Sixteen checks, a few seconds, nothing to install. Each one encodes a bug that
+Seventeen checks, a few seconds, nothing to install. Each one encodes a bug that
 actually shipped. They build a real Tk window and a real `App`, so windows
 flash on screen while they run; none of them touch your desktop icons, because
 the shell is stubbed out. `.github/workflows/checks.yml` runs the same command
@@ -225,6 +225,23 @@ is the crowd-slider ghost bug wearing a new hat. Surfing rides a REAL icon
 through the same `can_move_icons()` gate as dragging, and the balloon never
 rises above `oy+120` because the roaming check counts `y < oy` as out of
 sight. `tests/test_rides.py` holds all of it.
+
+**Playing on a window is four more states that skip physics, and `f.play` is
+the only thing tying him to it.** `PLAYS` is the per-character menu, like
+`RIDES`; `decide()` picks a window through `pick_window` (the foreground one
+seven times in ten) and `go_play` sends him: a perch goes up the way a hunt
+does and `_st_hunt` sits him down once `f.plat` is that window, the other
+three walk and `_st_walk`'s arrival hook begins them. Every play state re-reads
+`terrain.win_rect` each frame, so a dragged window carries him and a closed one
+drops him (`terrain_changed`). `Fighter.set_state` clears `f.play` for any
+state outside `KEEP_PLAY`, which is what makes a grab, a hit, a fight or sleep
+let go without a call at each site; the play's own ends call `end_play`. The
+scare in `poll_cursor` is gated on the cursor's speed TOWARDS him, so a cursor
+that stops on him is a grab and gets the rings. Nudging real windows is
+`nudge_window`, and only it: off unless `move_windows`, never the foreground
+window while `idle_seconds() < 2`, never a maximised one, clamped to its
+monitor's work area, six a minute; `restore_windows` is the undo.
+`tests/test_windows.py` holds all of it.
 
 **The weapon he fires is the weapon he closed the distance for.** The fight
 state walks him to `REACH[f.plan]`, so `start_attack` must use `f.plan` and

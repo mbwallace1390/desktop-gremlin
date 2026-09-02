@@ -18,7 +18,7 @@ STATES = ["idle", "walk", "hunt", "fight", "carry", "jump", "fall", "zip",
           "hookfire", "ledge", "wallslide", "grabbed", "thrown", "taunt",
           "cursor", "sleep", "ko", "attack",
           "blink", "float", "pogo", "skate", "surf", "ride", "cannonwind",
-          "jet", "climb"]
+          "jet", "climb", "perch", "hang", "cling", "knock"]
 UPRIGHT = ("idle", "walk", "hunt", "fight", "carry", "taunt", "cursor", "attack")
 
 

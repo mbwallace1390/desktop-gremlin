@@ -110,6 +110,7 @@ app.apply_settings()
 for f in app.fighters:
     f.hp = 100.0
 said = dict((n, 0) for n in gm.ROSTER)
+moody = dict((n, 0) for n in gm.ROSTER)     # mood lines: the chatty-gated ones
 stole = dict((n, 0) for n in gm.ROSTER)
 melee = dict((n, 0) for n in gm.ROSTER)
 shots = dict((n, 0) for n in gm.ROSTER)
@@ -119,6 +120,8 @@ _yell = gm.Fighter.yell
 
 def spy_yell(self, event, dur=1.5, **fmt):
     said[self.kind] = said.get(self.kind, 0) + 1
+    if event in gm.MOODS:
+        moody[self.kind] += 1
     return _yell(self, event, dur, **fmt)
 
 
@@ -155,14 +158,19 @@ except Exception as exc:
     bad.append("the ten-way brawl raised %r" % exc)
 
 gm.Fighter.yell = _yell
-talk = [said[n] for n in gm.ROSTER]
+# Judged on mood lines: those go through the chatty gate, and everyone's mood
+# drifts at the same rate. Counting every yell measured the brawl instead --
+# a knock-out is four lines from two fighters whatever their temperament --
+# and swung with the seed.
+talk = [moody[n] for n in gm.ROSTER]
 print("")
-print("%-9s %6s %6s %7s  %s" % ("who", "lines", "shots", "melee%", "temperament"))
+print("%-9s %6s %6s %6s %7s  %s" % ("who", "lines", "moods", "shots", "melee%",
+                                    "temperament"))
 for n in gm.ROSTER:
     m = (100.0 * melee[n] / shots[n]) if shots[n] else 0.0
     t = gm.TRAITS[n]
-    print("%-9s %6d %6d %6.0f%%  aggro %.2f chatty %.2f nerve %.2f"
-          % (n, said[n], shots[n], m, t["aggro"], t["chatty"], t["nerve"]))
+    print("%-9s %6d %6d %6d %6.0f%%  aggro %.2f chatty %.2f nerve %.2f"
+          % (n, said[n], moody[n], shots[n], m, t["aggro"], t["chatty"], t["nerve"]))
 
 if talk and max(talk) < 1.8 * (min(talk) + 1):
     bad.append("everyone talks about the same amount: %s" % talk)

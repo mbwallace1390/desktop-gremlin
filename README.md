@@ -40,8 +40,8 @@ python desktop_gremlin.py
 ```
 
 Everything lives on the **tray icon**, bottom-right: Settings, Pause, Bring
-them to my cursor, Restore my icon layout, Quit. Right-clicking a gremlin also
-opens Settings.
+them to my cursor, Restore my icon layout, Put my windows back, Quit.
+Right-clicking a gremlin also opens Settings.
 
 Running `python desktop_gremlin.py` by hand keeps a console, and closing it
 kills them - that console is their parent process. Use `pythonw
@@ -220,6 +220,28 @@ anywhere on screen and sometimes come pick a fight with it.
 
 Everywhere else the overlay is click-through, so it never intercepts your work.
 
+## They play on your windows
+
+The window you are working in is a climbing frame. One will sit on its title
+bar with legs dangling, kick its feet, lie back, doze off. Another hangs from
+the bottom edge by the hands and swings, with the odd pull-up. The nervy ones
+cling to a side edge and peek round it, or climb it hand over hand and sit on
+the top. The loud ones bang on the glass, lean on it, press a face against it.
+Each has its own repertoire; the grump only ever leans. Other windows get
+visits too, but the one with the focus gets most of them, and a maximised
+window has no edges to hang off.
+
+Bring your cursor towards one on a window and it scrambles off, so your click
+on a title-bar button, a scrollbar or an edge gets through. Stop the cursor on
+one and the grab rings appear as usual.
+
+They never move a window unless you let them. **Settings → *Let them nudge my
+windows*** (off by default) allows a shove of a few pixels: a knock ends with
+one, and a rocket into a window slides it a little. Never the window you are
+typing in, never a maximised one, never off its monitor, never more than a few
+a minute. **Tray → Put my windows back** returns every nudged window to where
+it was.
+
 They can leave the screen, and come back on the other side of it. Walk off the
 right edge, reappear on the left. It happens when one gets knocked out of view,
 and it stops a fight drifting off the edge and carrying on where you cannot see
@@ -250,6 +272,7 @@ All of them sit next to the script, and every one is safe to delete.
 | `chaos` | `1.0` | how fast they escalate; scales icon-stealing too |
 | `crowd` | `2` | how many of them, 1 to 10 |
 | `move_icons` | `false` | let them physically drag your icons |
+| `move_windows` | `false` | let them nudge your windows a few pixels; *Put my windows back* undoes it |
 | `shots_over_icons` | `true` | stray fire passes over icons; aimed fire and blasts still land |
 | `blood` | `false` | cartoon blood: sprays on hits, stains the floor, fades; water balloons mop it |
 | `react_to_windows` | `true` | comment on window titles, follow focus |
@@ -339,7 +362,7 @@ screenshot.
 python tests\run_all.py
 ```
 
-Sixteen checks, a few seconds, nothing to install. They drive the real app
+Seventeen checks, a few seconds, nothing to install. They drive the real app
 with the Windows shell stubbed out, so they never touch your desktop. Every one
 of them encodes a bug that actually shipped. The same checks run on every push
 in GitHub Actions, on a Windows runner.

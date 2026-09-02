@@ -226,6 +226,7 @@ DEFAULTS = {
     "chaos": 1.0,             # how fast they escalate
     "crowd": 2,               # how many of them, 1 to 10
     "move_icons": False,      # let them physically drag your desktop icons (opt-in)
+    "move_windows": False,    # let them nudge your windows a few pixels (opt-in)
     "shots_over_icons": True, # stray fire passes over icons instead of into them
     "blood": False,           # cartoon blood and floor stains (opt-in)
     "react_to_windows": True, # comment on real window titles, follow focus
@@ -257,9 +258,9 @@ def load_settings():
         s["crowd"] = int(min(max(int(s["crowd"]), 1), len(ROSTER)))
     except Exception:
         return dict(DEFAULTS)
-    for k in ("move_icons", "shots_over_icons", "blood", "react_to_windows",
-              "sleep_when_idle", "all_monitors", "pause_fullscreen",
-              "start_with_windows"):
+    for k in ("move_icons", "move_windows", "shots_over_icons", "blood",
+              "react_to_windows", "sleep_when_idle", "all_monitors",
+              "pause_fullscreen", "start_with_windows"):
         s[k] = bool(s[k])
     return s
 
@@ -904,6 +905,34 @@ def is_cloaked(hwnd):
     return bool(v.value)
 
 
+def window_rect(hwnd):
+    """The rect Windows positions a window BY, which on Win10/11 is a few
+    pixels bigger than the frame you can see (frame_bounds). Nudges move by a
+    delta, so the two never have to agree."""
+    try:
+        return win32gui.GetWindowRect(hwnd)
+    except Exception:
+        return None
+
+
+def place_window(hwnd, x, y):
+    """Move a top-level window: no resize, no raise, no activation."""
+    try:
+        win32gui.SetWindowPos(hwnd, 0, int(x), int(y), 0, 0,
+                              win32con.SWP_NOSIZE | win32con.SWP_NOZORDER
+                              | win32con.SWP_NOACTIVATE)
+        return True
+    except Exception:
+        return False
+
+
+def window_alive(hwnd):
+    try:
+        return bool(win32gui.IsWindow(hwnd))
+    except Exception:
+        return False
+
+
 SKIP_CLASSES = {
     "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd",
     "Windows.UI.Core.CoreWindow", "TkTopLevel", "tooltips_class32",
@@ -1288,6 +1317,7 @@ class SettingsWindow:
             drag.config(state="disabled", disabledforeground="#6C7BB0",
                         text="Drag my desktop icons  (no layout backup — off)")
         check("shots_over_icons", "Stray shots fly over my icons  (aimed fire still hits)")
+        check("move_windows", "Let them nudge my windows  (a few pixels; undone from the tray)")
         check("all_monitors", "Use all monitors")
         check("pause_fullscreen", "Hide while a fullscreen app is in front  (games, films)")
         check("start_with_windows", "Start with Windows")
@@ -1502,6 +1532,7 @@ class Terrain:
         self._targets = []
         self.bounds = []      # (cx, cy, half_w, half_h, target) for hit tests
         self.win_pos = {}     # hwnd -> (l, t) last seen, for riding
+        self.win_rect = {}    # hwnd -> (l, t, r, b): all four edges, for playing on
         self.moved = {}       # hwnd -> (dx, dy) since last refresh
         self.last = 0.0
         self.icons_ok = False
@@ -1534,9 +1565,11 @@ class Terrain:
         self.windows = windows
 
         self.win_pos = {}
+        self.win_rect = {}
         self.moved = {}
         for title, l, t, r, b, hwnd in self.windows:
             self.win_pos[hwnd] = (l, t)
+            self.win_rect[hwnd] = (l, t, r, b)
             if hwnd in prev:
                 dx, dy = l - prev[hwnd][0], t - prev[hwnd][1]
                 if dx or dy:
@@ -1736,6 +1769,12 @@ TRAITS = {
 VOICES = {
     "brawler": {
         "bored":    ["...", "nothing to hit", "hm", "quiet. too quiet."],
+        "perch":    ["best seat in the house", "I can see EVERYTHING from up here",
+                     "king of the window"],
+        "hang":     ["look, no feet", "ONE hand. watch this", "arms of steel"],
+        "knock":    ["OPEN UP", "anybody in there?", "I know you're in there"],
+        "scramble": ["I wasn't touching it", "NOPE", "you'll never take me"],
+        "shove":    ["budge up", "MOVE", "that's better"],
         "hyped":    ["LET'S GO", "YES", "NOW we're talking", "GET IN"],
         "furious":  ["#@$%!", "RAAAGH", "YOU ABSOLUTE TURNIP", "I'LL END YOU"],
         "smug":     ["too easy", "nailed it", "heh", "obviously"],
@@ -1776,6 +1815,11 @@ VOICES = {
     },
     "sniper": {
         "bored":    ["...", "no targets", "holding", "nothing in range"],
+        "perch":    ["good vantage", "overwatch", "clear sightlines up here"],
+        "hang":     ["holding position", "grip is fine", "no movement below"],
+        "knock":    ["knock knock. no joke.", "occupied?", "checking the perimeter"],
+        "scramble": ["compromised", "relocating", "spotted"],
+        "shove":    ["adjusting", "two inches left", "better angle"],
         "hyped":    ["target rich", "in range", "acquired", "finally, a shot"],
         "furious":  ["recalculating", "you moved", "that was my shot",
                      "I do not miss twice"],
@@ -1819,6 +1863,11 @@ VOICES = {
     },
     "coward": {
         "bored":    ["...", "is it over?", "quiet is good", "quiet is nice"],
+        "perch":    ["it's safer up here", "nobody can reach me", "I'll just sit here quietly"],
+        "hang":     ["don't let go don't let go", "this was a bad idea", "how do I get down"],
+        "knock":    ["um, hello?", "sorry to bother you", "is anyone home? sorry"],
+        "scramble": ["sorry sorry sorry", "I'll go", "wasn't me"],
+        "shove":    ["oops", "sorry about the window", "it slipped"],
         "hyped":    ["oh! oh good", "is that for me?", "yes? YES?"],
         "furious":  ["I'm WARNING you", "don't make me", "I'll do it, I will"],
         "smug":     ["I survived", "still here", "see? see?"],
@@ -1860,6 +1909,11 @@ VOICES = {
     },
     "showoff": {
         "bored":    ["no audience", "...", "wasted on this crowd", "is anyone watching"],
+        "perch":    ["throne acquired", "admire me", "I look great up here"],
+        "hang":     ["no hands! ok, hands", "ta-daaa", "watch the swing"],
+        "knock":    ["autograph? no? fine", "let me IN, fans", "your window needs me"],
+        "scramble": ["you saw NOTHING", "exit, stage left", "graceful, wasn't it"],
+        "shove":    ["a little to the left", "there. art.", "feng shui"],
         "hyped":    ["TA-DAA", "watch THIS", "and he's OFF", "showtime"],
         "furious":  ["how DARE you", "in front of everyone?", "UNACCEPTABLE"],
         "smug":     ["and the crowd goes wild", "flawless", "did you see that",
@@ -1901,6 +1955,11 @@ VOICES = {
     },
     "grump": {
         "bored":    ["...", "*sigh*", "typical", "wonderful."],
+        "perch":    ["my back", "cold up here", "someone dust this"],
+        "hang":     ["arms hurt", "why am I doing this", "not built for this"],
+        "knock":    ["shut it properly", "answer the door", "this window sticks"],
+        "scramble": ["fine. FINE.", "I was leaving anyway", "don't touch me"],
+        "shove":    ["it was crooked", "there. happy?", "better. still ugly"],
         "hyped":    ["about time", "suppose that'll do", "fine. good."],
         "furious":  ["right. RIGHT.", "I've had it", "that's the last straw"],
         "smug":     ["told you", "as I said", "hm.", "knew it"],
@@ -1940,6 +1999,11 @@ VOICES = {
     },
     "magpie": {
         "bored":    ["...", "ooh?", "nothing shiny", "hm. dull."],
+        "perch":    ["ooh, high up", "I can see the icons from here", "mine. this too."],
+        "hang":     ["upside down icons", "is there anything under here", "dangle time"],
+        "knock":    ["what's inside?", "hello? treasures?", "let me see in"],
+        "scramble": ["not stealing! probably", "bye bye", "can't catch me"],
+        "shove":    ["scoot", "over you go", "more room for shiny"],
         "hyped":    ["OOH", "shiny shiny", "MINE", "look at it!"],
         "furious":  ["MINE", "give it BACK", "that's not yours"],
         "smug":     ["mine now", "collected", "one more", "into the pile"],
@@ -1981,6 +2045,12 @@ VOICES = {
     },
     "zealot": {
         "bored":    ["...", "the hour approaches", "patience", "soon"],
+        "perch":    ["I watch from on high", "the summit is mine", "behold"],
+        "hang":     ["pain is fuel", "I do not tire", "grip of the righteous"],
+        "knock":    ["open, in the name of chaos", "REPENT", "come out and face me"],
+        "scramble": ["a strategic withdrawal", "you cannot scare the faithful",
+                     "I retreat to strike again"],
+        "shove":    ["it moved. good.", "make way", "the wall yields"],
         "hyped":    ["IT BEGINS", "AT LAST", "THE HOUR IS COME", "THE TIME IS NOW"],
         "furious":  ["HERESY", "YOU WILL ANSWER", "IT IS WRITTEN", "UNCLEAN"],
         "smug":     ["as foretold", "it was written", "inevitable", "so it is"],
@@ -2022,6 +2092,11 @@ VOICES = {
     },
     "tinkerer": {
         "bored":    ["...", "recalibrating", "hm", "idle cycle"],
+        "perch":    ["structural check: fine", "load test passed", "good view of the wiring"],
+        "hang":     ["testing the tensile strength", "hinge seems sound", "grip: nominal"],
+        "knock":    ["hollow. interesting", "inspecting the frame", "tap tap. measurement."],
+        "scramble": ["abort test", "recording the result", "unscheduled dismount"],
+        "shove":    ["recalibrated", "there. level.", "adjusted by a quarter"],
         "hyped":    ["it works!", "excellent", "as designed", "ha!"],
         "furious":  ["you broke it", "that was CALIBRATED", "unacceptable variance"],
         "smug":     ["as designed", "within tolerance", "as calculated", "within model"],
@@ -2062,6 +2137,11 @@ VOICES = {
     },
     "drama": {
         "bored":    ["...", "I am WASTING away", "such tedium", "nothing. NOTHING."],
+        "perch":    ["I sit ABOVE it all", "a balcony scene", "gaze up at me"],
+        "hang":     ["I'm SLIPPING", "hanging by a THREAD", "goodbye cruel desktop"],
+        "knock":    ["LET ME IN", "I am LOCKED OUT", "abandoned on the doorstep"],
+        "scramble": ["I've been SEEN", "flee! FLEE!", "the shame of it"],
+        "shove":    ["it MOVED", "did you see that", "my strength is BOUNDLESS"],
         "hyped":    ["AT LONG LAST", "MY MOMENT", "I LIVE", "oh, JOY"],
         "furious":  ["BETRAYAL", "how COULD you", "I am UNDONE", "TREACHERY"],
         "smug":     ["naturally", "was there ever doubt", "I was magnificent"],
@@ -2100,6 +2180,11 @@ VOICES = {
     },
     "veteran": {
         "bored":    ["...", "hm", "seen it", "quiet"],
+        "perch":    ["nice spot", "high ground", "quiet up here"],
+        "hang":     ["still got it", "one pull-up", "decent grip"],
+        "knock":    ["anyone in", "hello", "checking"],
+        "scramble": ["moving", "noted", "out"],
+        "shove":    ["nudge", "that'll do", "shifted"],
         "hyped":    ["good", "right", "hm. good.", "now then"],
         "furious":  ["no", "don't", "that's enough", "last warning"],
         "smug":     ["hm", "thought so", "same as always", "predictable"],
@@ -2164,6 +2249,32 @@ RIDES = {
 # it is a ballistic commute, and keeping it leisure-only made it nearly
 # extinct once travel became how rides mostly start.
 TRAVEL_RIDES = ("pogo", "skate", "jet", "blink", "cannon")
+
+# What each of them does with one of your windows, tried in this order until
+# one fits the window's shape. perch = sit on the title bar, legs over the
+# front; hang = from the bottom edge, swinging; cling = a side edge, peeking
+# round it; knock = bang on it and lean on it. The grump only ever leans.
+PLAYS = {
+    "brawler":  ("knock", "perch"),
+    "sniper":   ("perch", "cling"),
+    "coward":   ("hang", "cling", "perch"),
+    "showoff":  ("perch", "hang", "knock"),
+    "grump":    ("knock",),
+    "magpie":   ("cling", "hang", "perch"),
+    "zealot":   ("knock", "cling"),
+    "tinkerer": ("perch", "knock", "hang"),
+    "drama":    ("perch", "hang", "knock"),
+    "veteran":  ("perch", "cling"),
+}
+PLAY_STATES = ("perch", "hang", "cling", "knock")
+# how long each play lasts, seconds; the knock is paced by its own phases
+PLAY_TIME = {"perch": (8.0, 22.0), "hang": (5.0, 14.0), "cling": (5.0, 12.0),
+             "knock": (30.0, 30.0)}
+# The states a fighter may pass through on the way to a window and keep his
+# plan. Anything else -- grabbed, thrown, a fight, sleep -- lets go of it.
+KEEP_PLAY = ("walk", "hunt", "jump", "fall", "ledge", "climb", "hookfire",
+             "zip") + PLAY_STATES
+NUDGE_PER_MINUTE = 6
 CONFETTI_COLS = ("#FF8AD8", "#6FD8FF", "#FFD35C", "#A8E86A", "#B79BFF")
 WATER = "#7FBBFF"
 WOOD = "#C89A66"
@@ -2235,6 +2346,9 @@ class Fighter:
         self.climb_bot = 0.0       # ...and where its wall ends, for the grips
         self.climb_x = 0.0         # the edge being scaled
         self.climb_side = 1        # +1 = left edge, moving right onto the top
+        self.play = None           # what he is doing with a window, and which
+        self.window_shy = None     # the window he last scrambled off...
+        self.window_cd = 0.0       # ...and until when he leaves it alone
 
     # -- helpers ----------------------------------------------------------
     def become(self, kind):
@@ -2269,6 +2383,10 @@ class Fighter:
             self.yell(event, dur, **fmt)
 
     def set_state(self, s):
+        if self.play is not None and s not in KEEP_PLAY:
+            # grabbed, thrown, a fight, sleep: he lets go of the window plan
+            # here, the one place every state change passes through
+            self.play = None
         self.state, self.st = s, 0.0
 
     def set_mood(self, m, quiet=False):
@@ -2358,6 +2476,10 @@ class App:
         self.icons_locked = False
         self.watch = Watcher()
         self.shove_at = -9.0      # last time a bullet nudged an icon
+        self.nudged = {}          # hwnd -> where the window was before its first nudge
+        self.nudged_at = {}       # hwnd -> when it was last nudged
+        self.nudges = []          # when any window was nudged, for the rate limit
+        self.magnet_at = 0.0      # when the window in use last drew a visitor
         self.warned = False       # only nag about errors once a run
         self.awake_since = 0.0
         self.greeted = False
@@ -2391,6 +2513,7 @@ class App:
         self.tray.sep()
         self.tray.add("Bring them to my cursor", self.summon)
         self.tray.add("Restore my icon layout", self.restore_icons)
+        self.tray.add("Put my windows back", self.restore_windows)
         self.tray.sep()
         self.tray.add("Quit", self.quit)
         self.tray.build()
@@ -2691,6 +2814,7 @@ class App:
             self.mouse["t"] = self.time
         self.mouse["x"], self.mouse["y"] = nx, ny
         self.hover = self.near_fighter(nx, ny)
+        self.scare(dt)
 
     # -- fx ----------------------------------------------------------------
     def shake(self, t, m):
@@ -3120,6 +3244,286 @@ class App:
         return True
 
     # ==================================================================
+    #  playing on your windows
+    # ==================================================================
+    def covers_monitor(self, l, t, r, b):
+        """Maximised or fullscreen: nothing to hang off, nowhere to nudge it."""
+        for mon, work in self.mons:
+            if l <= work[0] + 2 and t <= work[1] + 2 and r >= work[2] - 2 \
+                    and b >= work[3] - 2:
+                return True
+        return False
+
+    def work_area_at(self, x, y):
+        for mon, work in self.mons:
+            if mon[0] <= x < mon[2] and mon[1] <= y < mon[3]:
+                return work
+        return self.mons[0][1]
+
+    def pick_window(self, f):
+        """A window to play on: the one you are using, seven times in ten,
+        while react_to_windows is on. Maximised windows have no edges, and a
+        window he has just scrambled off is left alone for a while."""
+        picks = []
+        for hwnd, rect in self.terrain.win_rect.items():
+            if hwnd == f.window_shy and self.time < f.window_cd:
+                continue
+            if not self.playable(rect):
+                continue
+            picks.append(hwnd)
+        if not picks:
+            return None
+        if CFG["react_to_windows"] and self.fg and self.fg[1] in picks \
+                and random.random() < .7:
+            return self.fg[1]
+        return random.choice(picks)
+
+    def play_spot(self, f, kind, hwnd):
+        """Where this play happens on this window, or None when the window's
+        shape does not allow it: on the top edge for a perch, an arm's length
+        under the bottom edge for a hang, part-way up a side for a cling, on
+        the floor beside a side for a knock."""
+        rect = self.terrain.win_rect.get(hwnd)
+        if not rect:
+            return None
+        l, t, r, b = rect
+        S = f.sc
+        gy = self.ground_at(clamp((l + r) / 2, self.ox + 1, self.ox + self.W - 1))
+        lo, hi = self.ox + 40, self.ox + self.W - 40
+        if kind == "perch":
+            if not (self.oy + 30 < t < gy - 60):
+                return None
+            return {"x": clamp(random.uniform(l + 30, r - 30), lo, hi), "side": 0}
+        if kind == "hang":
+            feet = b + 82 * S
+            # the edge has to be above him, and within a jump of the floor
+            if not (feet < gy - 4 and gy - feet < 170) or b < self.oy + 60:
+                return None
+            return {"x": clamp(random.uniform(l + 30, r - 30), lo, hi), "side": 0}
+        sides = [(l, 1), (r, -1)]
+        random.shuffle(sides)
+        for edge, side in sides:
+            if not (lo < edge < hi):
+                continue
+            if kind == "knock" and b > gy - 60 and t < gy - 90:
+                return {"x": edge - side * 22, "side": side}
+            if kind == "cling" and b > gy - 170 and t < gy - 130 and t > self.oy + 10:
+                top = t + 110 * S
+                y = random.uniform(top, max(top, min(b + 20, gy)))
+                return {"x": edge - side * 6, "y": y, "side": side}
+        return None
+
+    def go_play(self, f, kind, hwnd):
+        """Set off to play on a window. False when its shape says no."""
+        spot = self.play_spot(f, kind, hwnd)
+        if spot is None:
+            return False
+        f.play = {"kind": kind, "hwnd": hwnd, "x": spot["x"], "y": spot.get("y"),
+                  "side": spot["side"], "until": 0.0, "phase": 0, "t0": 0.0,
+                  "from_y": f.y}
+        f.foe = None
+        f.mode = "roam"
+        f.target = None
+        if kind == "perch":
+            # the top edge the way a hunt gets there: walk, hook, climb.
+            # _st_hunt begins the perch instead of an attack once he stands
+            # on the window.
+            for tg in self.terrain.targets():
+                if tg["kind"] == "window" and tg["key"] == hwnd:
+                    f.target = tg
+                    break
+            if f.target is None:
+                f.play = None
+                return False
+            f.hits = 0
+            f.snatch = False
+            f.plan = "sword"
+            f.set_state("hunt")
+        else:
+            f.wander_to = spot["x"]
+            if abs(spot["x"] - f.x) > 420 and f.on_ground and random.random() < .7:
+                # a long way at walking pace is a long time to get shot:
+                # swing most of it and finish on foot -- landing with a plan
+                # resumes the walk
+                self.fire_hook(f, spot["x"], self.ground_at(spot["x"]) - 160)
+            else:
+                f.set_state("walk")
+        return True
+
+    def playable(self, rect):
+        """Big enough to have edges, and not filling a monitor."""
+        l, t, r, b = rect
+        return r - l >= 200 and b - t >= 120 and not self.covers_monitor(l, t, r, b)
+
+    def visit_window(self, f, hwnd, kinds=None):
+        """Send him to this window with whichever of his plays fits it."""
+        rect = self.terrain.win_rect.get(hwnd)
+        if not rect or not self.playable(rect):
+            return False
+        kinds = PLAYS[f.kind] if kinds is None else kinds
+        for kind in random.sample(kinds, len(kinds)):
+            if self.go_play(f, kind, hwnd):
+                return True
+        return False
+
+    def window_magnet(self):
+        """The window you are using draws a visitor now and then, when nobody
+        is on it or on the way to it. That is the point of the whole thing:
+        it is YOUR window they climb on, not just any window."""
+        hwnd = self.fg[1] if self.fg else None
+        if not hwnd or hwnd not in self.terrain.win_rect or random.random() > .18:
+            return
+        if any(f.play and f.play["hwnd"] == hwnd for f in self.fighters):
+            return
+        # anyone not mid-brawl: an icon hunt is dropped for it, and a furious
+        # one comes to bang on it rather than sit on it. With two of them
+        # fighting most of the time, calm idlers alone were too rare.
+        free = [f for f in self.fighters
+                if f.state in ("idle", "walk", "taunt", "hunt") and PLAYS[f.kind]
+                and not (f.window_shy == hwnd and self.time < f.window_cd)]
+        if free:
+            f = random.choice(free)
+            kinds = PLAYS[f.kind] if f.mood != "furious" \
+                else tuple(k for k in PLAYS[f.kind] if k == "knock")
+            if kinds:
+                self.visit_window(f, hwnd, kinds)
+
+    def begin_play(self, f):
+        """He has arrived: pin him to the window and start the play. False
+        when the window has gone in the meantime."""
+        p = f.play
+        rect = self.terrain.win_rect.get(p["hwnd"]) if p else None
+        if not rect:
+            f.play = None
+            return False
+        l, t, r, b = rect
+        kind = p["kind"]
+        K = f.K()
+        p["until"] = self.time + random.uniform(*PLAY_TIME[kind])
+        p["phase"] = 0
+        p["t0"] = self.time
+        p["from_y"] = f.y
+        f.vx = f.vy = 0.0
+        f.foe = None
+        f.target = None
+        f.plat = None            # or the window-rider pass moves him twice
+        if kind == "perch":
+            p["x"] = clamp(f.x, l + 30, r - 30)
+            f.x, f.y = p["x"], float(t)
+            f.on_ground = False
+            f.chat("perch", 1.6)
+        elif kind == "hang":
+            f.x = p["x"]
+            f.on_ground = False
+            self.puff(f.x, f.y, 2, DUST, K, 6)          # the jump for the edge
+            f.chat("hang", 1.6)
+        elif kind == "cling":
+            edge = l if p["side"] == 1 else r
+            f.climb_top, f.climb_bot = float(t), float(b)
+            f.climb_x, f.climb_side = float(edge), p["side"]
+            f.x = edge - p["side"] * 6
+            p["y"] = clamp(p["y"], t + 110 * f.sc, min(b + 20, self.ground_at(f.x)))
+            f.face = p["side"]
+            f.on_ground = False
+            f.chat("hang", 1.4)
+        else:                                            # knock
+            edge = l if p["side"] == 1 else r
+            f.x = edge - p["side"] * 22
+            f.y = self.ground_at(f.x)
+            f.face = p["side"]
+            f.on_ground = True
+            f.chat("knock", 1.6)
+        f.set_state(kind)
+        return True
+
+    def end_play(self, f):
+        """Let go of the window. Callers set the next state; this only makes
+        sure nothing refers to it any more."""
+        f.play = None
+
+    def scare(self, dt):
+        """Anyone on a window gets out of the cursor's way when it comes at
+        him, so a click on a title-bar button, a scrollbar or an edge gets
+        through. Gated on the cursor's SPEED towards him: one that stops on
+        him is a grab, and the rings appear as usual."""
+        mx, my = self.mouse["x"], self.mouse["y"]
+        vx, vy = self.mouse["vx"], self.mouse["vy"]
+        if mx < -9000:
+            return
+        speed = math.hypot(vx, vy)
+        for f in self.fighters:
+            if not f.play or f.state not in PLAY_STATES:
+                continue
+            bx, by = f.x, f.y - 40 * f.sc
+            d = dist(mx, my, bx, by)
+            if d > 120:
+                continue
+            toward = ((bx - mx) * vx + (by - my) * vy) / max(d, 1.0)
+            if toward > 150 or (d < 60 and speed > 60):
+                self.scramble(f, mx)
+
+    def scramble(self, f, from_x):
+        """Off the window, away from the cursor, and not back for a while."""
+        K = f.K()
+        f.window_shy = f.play["hwnd"]
+        f.window_cd = self.time + 8
+        self.end_play(f)
+        away = 1 if f.x >= from_x else -1
+        f.vx = away * 260 * K
+        f.vy = -300 * K
+        f.on_ground = False
+        f.set_state("fall")
+        f.chat("scramble", 1.2)
+
+    def nudge_window(self, hwnd, dx, dy):
+        """Slide one of your windows a few pixels. Off unless move_windows is
+        on; never a maximised one, never the one you are typing in, never off
+        its monitor, never more than one every few seconds. The first nudge of
+        a window remembers where it was, for the tray."""
+        if not CFG["move_windows"] or not hwnd:
+            return False
+        rect = self.terrain.win_rect.get(hwnd)
+        if not rect or self.covers_monitor(*rect):
+            return False
+        if self.fg and self.fg[1] == hwnd and idle_seconds() < 2.0:
+            return False
+        now = self.time
+        self.nudges = [x for x in self.nudges if now - x < 60]
+        if len(self.nudges) >= NUDGE_PER_MINUTE \
+                or now - self.nudged_at.get(hwnd, -99.0) < 4:
+            return False
+        l, t, r, b = rect
+        work = self.work_area_at((l + r) / 2, (t + b) / 2)
+        dx = int(round(clamp(dx, work[0] - l, max(work[0] - l, work[2] - r))))
+        dy = int(round(clamp(dy, work[1] - t, max(work[1] - t, work[3] - b))))
+        if not dx and not dy:
+            return False
+        wr = window_rect(hwnd)
+        if not wr or not place_window(hwnd, wr[0] + dx, wr[1] + dy):
+            return False
+        self.nudged.setdefault(hwnd, (wr[0], wr[1]))
+        self.nudged_at[hwnd] = now
+        self.nudges.append(now)
+        self.terrain.win_rect[hwnd] = (l + dx, t + dy, r + dx, b + dy)  # until the next scan
+        return True
+
+    def restore_windows(self):
+        """Put every nudged window back where it was before its first nudge."""
+        n = 0
+        for hwnd, (x, y) in list(self.nudged.items()):
+            if window_alive(hwnd) and place_window(hwnd, x, y):
+                n += 1
+        self.nudged.clear()
+        self.nudged_at.clear()
+        try:
+            self.tray.notify("Desktop Gremlin",
+                             f"Put {n} window(s) back." if n
+                             else "No window has been nudged.")
+        except Exception:
+            pass
+        return n
+
+    # ==================================================================
     #  combat
     # ==================================================================
     def fire_hook(self, f, tx, ty):
@@ -3394,6 +3798,13 @@ class App:
             k = f.K()
             self.debris(t["cx"], t["cy"], min(t["w"], 90), min(t["h"], 60), 14, "#8095E8", k)
             self.boom(t["cx"], t["cy"], 44, k)
+            if t.get("kind") == "window":
+                # a finished window slides a little, away from the shot --
+                # only ever under move_windows, and nudge_window says no to
+                # the one you are typing in
+                self.nudge_window(t["key"],
+                                  math.copysign(random.uniform(8, 16), t["cx"] - fx),
+                                  clamp((t["cy"] - fy) * .2, -8, 8))
             f.anger = max(0, f.anger - .35)
             f.boredom = max(0, f.boredom - .45)
             if f.mode == "fight" and f.foe and f.foe.hp > 0:
@@ -3455,6 +3866,18 @@ class App:
             f.boredom = 0
             f.chat("cursor", 1.4)
             return
+
+        # A window is a climbing frame. Not while furious, and never the one
+        # he just scrambled off: sit on it, hang under it, cling to its side,
+        # bang on it -- whichever of his own repertoire fits the window's
+        # shape. Mild anger may still climb; it just picks the knock.
+        if PLAYS[f.kind] and random.random() < .34 + .30 * f.boredom:
+            kinds = PLAYS[f.kind] if f.mood != "furious" \
+                else tuple(k for k in PLAYS[f.kind] if k == "knock")
+            hwnd = self.pick_window(f) if kinds else None
+            if hwnd and self.visit_window(f, hwnd, kinds):
+                f.boredom = max(0.0, f.boredom - .3)
+                return
 
         # Not everything is a fight. With his own way of getting around, a
         # bored one is now as likely to take a joyride, or wander over to
@@ -3659,14 +4082,23 @@ class App:
     def _st_walk(self, f, dt, K):
         d = f.wander_to - f.x
         if abs(d) < 12:
+            # a walk that was the way to a window ends by playing on it --
+            # from the ground only; a plan carried through a fall or a fight
+            # is stale, and a stale one is dropped, not acted on
+            if f.play and f.on_ground and abs(f.x - f.play["x"]) < 30 \
+                    and self.begin_play(f):
+                return
+            f.play = None
             f.set_state("idle")
             f.goal = self.time + random.uniform(.6, 1.8)
         else:
             # a long trudge upgrades itself into transport, same
             # destination -- walking is constant, so this is where the
-            # rides actually get used rather than the rare idle roll
+            # rides actually get used rather than the rare idle roll.
+            # Not on the way to a window: a ride ends in idle and forgets
+            # the plan, and most trips there are long enough to qualify.
             if f.on_ground and abs(d) > 300 and f.mode != "fight" \
-                    and random.random() < dt * .35 \
+                    and not f.play and random.random() < dt * .35 \
                     and self.joyride(f, dest=f.wander_to):
                 return True
             nf = 1 if d > 0 else -1
@@ -3885,6 +4317,9 @@ class App:
         elif f.st > 9:
             f.target = None
             f.set_state("idle")
+        elif f.play and f.on_ground and f.plat == ("window", f.play["hwnd"]):
+            # the hunt was the way up: standing on the window, he sits down
+            self.begin_play(f)
         else:
             reach = REACH[f.plan] * (.4 + .6 * K)
             d = t["cx"] - f.x
@@ -3907,14 +4342,22 @@ class App:
                     f.set_state("jump")
             elif self.time >= f.atk_cd:
                 f.vx = approach(f.vx, 0, 1800 * K * dt)
-                self.start_attack(f)
+                if f.play:
+                    # within reach but not up top yet: a hook to the edge
+                    # instead of a swing at it
+                    f.atk_cd = self.time + 1.2
+                    if f.on_ground:
+                        self.fire_hook(f, f.play["x"], t["top"] - 26)
+                else:
+                    self.start_attack(f)
             else:
                 f.vx = approach(f.vx, 0, 1800 * K * dt)
 
     def _st_airborne(self, f, dt, K):
         if f.on_ground:
             f.set_state("fight" if f.mode == "fight" and f.foe and f.foe.hp > 0
-                        else ("hunt" if f.target else "idle"))
+                        else ("hunt" if f.target else
+                              ("walk" if f.play else "idle")))
 
     def _st_ledge(self, f, dt, K):
         f.vx = f.vy = 0
@@ -3952,13 +4395,151 @@ class App:
                 f.x = f.climb_x + f.climb_side * 11
                 f.on_ground = True
                 f.squash = .3
-                if f.target:
+                if f.play and f.play["kind"] == "perch":
+                    self.begin_play(f)         # a cling that climbed up to sit
+                elif f.target:
                     f.set_state("hunt")
                 else:
                     f.set_state("idle")
                     f.goal = self.time + .4
         if f.st > 3.5:
             f.set_state("fall")
+
+    # -- on one of your windows --------------------------------------
+    def _st_perch(self, f, dt, K):
+        p = f.play
+        rect = self.terrain.win_rect.get(p["hwnd"]) if p else None
+        if not rect:
+            self.end_play(f)
+            f.set_state("fall")
+            return
+        l, t, r, b = rect
+        p["x"] = clamp(p["x"], l + 30, r - 30)
+        f.x, f.y = p["x"], float(t)
+        f.vx = f.vy = 0.0
+        f.on_ground = False
+        if p["phase"] == 0:
+            if random.random() < dt * .25:
+                f.face = -f.face                   # looking about
+            if f.st > 8 and random.random() < dt * .12:
+                p["phase"] = 1                     # lie back along the bar
+        elif p["phase"] == 1 and f.st > 14 and random.random() < dt * .1:
+            p["phase"] = 2                         # and doze off up there
+            f.set_mood("asleep", quiet=True)
+        if self.time > p["until"]:
+            self.end_play(f)
+            if f.mood == "asleep":
+                f.set_mood("bored", quiet=True)
+            f.vx = f.face * 120 * K
+            f.vy = -240 * K
+            f.set_state("fall")
+
+    def _st_hang(self, f, dt, K):
+        p = f.play
+        rect = self.terrain.win_rect.get(p["hwnd"]) if p else None
+        if not rect:
+            self.end_play(f)
+            f.set_state("fall")
+            return
+        l, t, r, b = rect
+        hang_y = b + 82 * f.sc                     # hands on the edge, feet here
+        k = clamp((self.time - p["t0"]) / .28, 0.0, 1.0)   # the leap for the edge
+        p["x"] = clamp(p["x"] + math.sin(self.time * 2.2 + f.seedp) * 12 * dt,
+                       l + 30, r - 30)
+        f.x = p["x"]
+        f.y = lerp(p["from_y"], hang_y, 1 - (1 - k) * (1 - k))
+        f.vx = f.vy = 0.0
+        f.on_ground = False
+        if k >= 1:
+            if p["phase"] == 0 and random.random() < dt * .18:
+                p["phase"], p["t1"] = 1, self.time # a pull-up
+            elif p["phase"] == 1 and self.time - p["t1"] > 1.2:
+                p["phase"] = 0
+        if self.time > p["until"]:
+            self.end_play(f)
+            f.vy = 60 * K
+            f.set_state("fall")
+
+    def _st_cling(self, f, dt, K):
+        p = f.play
+        rect = self.terrain.win_rect.get(p["hwnd"]) if p else None
+        if not rect:
+            self.end_play(f)
+            f.set_state("fall")
+            return
+        l, t, r, b = rect
+        S = f.sc
+        edge = l if p["side"] == 1 else r
+        f.climb_top, f.climb_bot = float(t), float(b)  # follow the window
+        f.climb_x, f.climb_side = float(edge), p["side"]
+        f.x = edge - p["side"] * 6
+        f.face = p["side"]
+        f.vx = f.vy = 0.0
+        f.on_ground = False
+        top = t + 110 * S
+        bot = max(top, min(b + 20, self.ground_at(f.x)))
+        k = clamp((self.time - p["t0"]) / .3, 0.0, 1.0)
+        if k < 1:
+            f.y = lerp(p["from_y"], p["y"], 1 - (1 - k) * (1 - k))
+            return
+        if p["phase"] == 0:
+            if random.random() < dt * .3:
+                p["phase"] = random.choice((1, 2, 2))
+                p["t1"] = self.time
+                p["dir"] = random.choice((-1, 1))
+        elif p["phase"] == 1:                      # a peek round the edge
+            if self.time - p["t1"] > 1.5:
+                p["phase"] = 0
+        else:                                      # a few holds up or down
+            pull = .55 + .9 * max(0.0, math.sin(self.time * 4.4))
+            f.y = clamp(f.y + p["dir"] * (45 + 45 * K) * pull * dt, top, bot)
+            if self.time - p["t1"] > 1.6:
+                p["phase"] = 0
+        p["y"] = f.y
+        if self.time > p["until"]:
+            if f.y - t < 220 and random.random() < .35:
+                # up the rest of the way, and sit on the top
+                f.play = {"kind": "perch", "hwnd": p["hwnd"], "x": f.x, "y": None,
+                          "side": 0, "until": 0.0, "phase": 0, "t0": self.time,
+                          "from_y": f.y}
+                f.set_state("climb")
+            else:
+                self.end_play(f)
+                f.vx = -f.face * 90 * K
+                f.vy = 40 * K
+                f.set_state("fall")
+
+    def _st_knock(self, f, dt, K):
+        p = f.play
+        rect = self.terrain.win_rect.get(p["hwnd"]) if p else None
+        if not rect:
+            self.end_play(f)
+            f.set_state("idle")
+            f.goal = self.time + .3
+            return
+        l, t, r, b = rect
+        edge = l if p["side"] == 1 else r
+        f.x = edge - p["side"] * 22
+        f.y = self.ground_at(f.x)
+        f.face = p["side"]
+        f.vx = f.vy = 0.0
+        f.on_ground = True
+        # knock, lean, face to the glass, then one shove -- if allowed
+        ph = 0 if f.st < 3 else 1 if f.st < 7 else 2 if f.st < 9 else 3
+        if ph != p["phase"] and p["phase"] != 4:
+            p["phase"] = ph
+            if ph == 3:
+                if self.nudge_window(p["hwnd"], p["side"] * random.uniform(8, 24), 0):
+                    f.chat("shove", 1.4)
+                    self.shake(.15, 3 * K)
+                else:
+                    p["phase"] = 4                 # nothing to push; done
+        if ph == 0 and random.random() < dt * 2.5:
+            self.puff(edge, f.y - 54 * f.sc, 1, DUST, K * .5, 3)   # knuckles
+        if f.st > 10.5 or (p["phase"] == 4 and f.st > 9.4):
+            self.end_play(f)
+            f.set_state("idle")
+            f.goal = self.time + random.uniform(.4, 1.0)
 
     def _st_wallslide(self, f, dt, K):
         f.vy = min(f.vy, 150 * K)
@@ -4105,6 +4686,10 @@ class App:
         "fall": _st_airborne,
         "ledge": _st_ledge,
         "climb": _st_climb,
+        "perch": _st_perch,
+        "hang": _st_hang,
+        "cling": _st_cling,
+        "knock": _st_knock,
         "wallslide": _st_wallslide,
         "attack": _st_attack,
         "hookfire": _st_hookfire,
@@ -4121,7 +4706,8 @@ class App:
     def physics(self, f, dt, gy):
         K = f.K()
         if f.state in ("zip", "grabbed", "ledge", "sleep",
-                       "float", "ride", "blink", "surf", "jet", "climb"):
+                       "float", "ride", "blink", "surf", "jet", "climb",
+                       "perch", "hang", "cling", "knock"):
             if f.state == "sleep":
                 f.vy += 1900 * K * dt
                 f.y = min(gy, f.y + f.vy * dt)
@@ -4183,8 +4769,10 @@ class App:
                 f.squash = .5
                 self.puff(f.x, f.y, 2, DUST, K, 8)
             if f.state in ("fall", "jump", "wallslide") and f.state != "thrown":
+                # a landing on the way to a window carries on walking there
                 f.set_state("fight" if f.mode == "fight" and f.foe and f.foe.hp > 0
-                            else ("hunt" if f.target else "idle"))
+                            else ("hunt" if f.target else
+                                  ("walk" if f.play else "idle")))
         if not f.on_ground and f.vy < -30 * K:
             f.squash = -.35
 
@@ -4228,10 +4816,26 @@ class App:
         moved, self.terrain.moved = self.terrain.moved, {}
         new = {(t["kind"], t["key"]): t for t in self.terrain.targets()}
         for f in self.fighters:
-            if f.plat and f.plat[0] == "window" and f.plat[1] in moved:
+            if f.plat and f.plat[0] == "window" and f.plat[1] in moved \
+                    and f.state not in PLAY_STATES:
                 dx, dy = moved[f.plat[1]]
                 f.x += dx
                 f.y += dy
+            if f.play:
+                # whoever is on a window, or on his way to one, follows it;
+                # a window that has gone is let go of
+                hw = f.play["hwnd"]
+                if hw in moved:
+                    dx, dy = moved[hw]
+                    f.play["x"] += dx
+                    if f.state in PLAY_STATES:
+                        f.x += dx
+                        f.y += dy
+                elif hw not in self.terrain.win_rect:
+                    was = f.state in PLAY_STATES
+                    self.end_play(f)
+                    if was:
+                        f.set_state("fall")
             if f.target:
                 key = (f.target["kind"], f.target["key"])
                 f.target = new.get(key)
@@ -4267,6 +4871,10 @@ class App:
             self.terrain_changed()
         if self.terrain.poll():
             self.terrain_changed()        # a background scan just landed
+        if CFG["react_to_windows"] and not self.asleep \
+                and self.time - self.magnet_at > 1.6:
+            self.magnet_at = self.time
+            self.window_magnet()
 
         if CFG["react_to_windows"] and not self.asleep:
             fg = foreground_window()
@@ -4279,7 +4887,8 @@ class App:
                     if self.time - f.said > 5:
                         f.said = self.time
                         f.say(line_for_title(f, fg[0]), 2.0)
-                    if random.random() < .45:
+                    r2 = random.random()
+                    if r2 < .30:
                         for t in self.terrain.targets():
                             if t["kind"] == "window" and t["key"] == fg[1]:
                                 f.target = t
@@ -4287,6 +4896,9 @@ class App:
                                 f.plan = plan_weapon(f.per)
                                 f.set_state("hunt")
                                 break
+                    elif r2 < .80:
+                        # the window you just switched to gets a visitor
+                        self.visit_window(f, fg[1])
             self.watch.note_focus(fg[1] if fg else None, self.time)
             ev = self.watch.pick(self.time, fg[0] if fg else "",
                                  self.time - self.awake_since)
@@ -4889,7 +5501,7 @@ class App:
             py, lean = -30, -.12
             fL, fR = (2, -6), (8, 4)
             hL, hR = (14, -58), (16, -40)
-        elif st == "climb":
+        elif st in ("climb", "cling"):
             # Hands GRAB. Each grip is a world-space hold on the edge line,
             # quantized so it stays planted while the body rises and then
             # snaps to the next hold -- offset half a step so the arms
@@ -4919,6 +5531,55 @@ class App:
                         f.climb_top + 8, f.climb_bot + 16)
             fL = (ex + .5, clamp((flw - f.y) / S, -34, 2))
             fR = (ex + 2, clamp((frw - f.y) / S, -34, 2))
+            if st == "cling" and f.play and f.play.get("phase") == 1:
+                tilt = .5                              # the peek round the edge
+        elif st == "perch":
+            ph = f.play.get("phase", 0) if f.play else 0
+            k = f.st * 3
+            if ph == 0:
+                # sat on the edge, legs over the front, hands beside the hips
+                py, lean = -8, -.06
+                fL = (4, 12 + 3 * max(0.0, math.sin(k)))
+                fR = (11 + 3 * math.sin(k), 15 - 4 * max(0.0, math.sin(k + 1.3)))
+                hL, hR = (-9, -6), (9, -6)
+                if f.emote_t > 0 and f.emote:
+                    hR = (15, -40 + math.sin(self.time * 9) * 4)
+            elif ph == 1:
+                # lying back along the bar, hands behind the head
+                py, lean, tilt = -8, -1.15, .1
+                fL, fR = (6, 12), (13, 14)
+                hL, hR = (14, -14), (10, -6)
+            else:
+                # dozed off up there
+                py, lean, tilt = -8, -.9, .5
+                fL, fR = (5, 13), (12, 15)
+                hL, hR = (2, -12), (10, -4)
+        elif st == "hang":
+            ph = f.play.get("phase", 0) if f.play else 0
+            sw = math.sin(self.time * 2.2 + f.seedp)
+            py = -30 - (18 if ph == 1 else 0)         # the pull-up lifts the hips
+            lean = .18 * sw
+            fL = (-4 + 5 * sw, 0)
+            fR = (5 + 5 * sw, 1)
+            hL, hR = (-7, -82), (7, -82)              # both hands on the edge
+        elif st == "knock":
+            ph = f.play.get("phase", 0) if f.play else 0
+            py = -30
+            fL, fR = (-7, 0), (7, 0)
+            hL = (-11, -36)
+            if ph == 0:
+                hR = (16, -54 + 6 * math.sin(f.st * 9))       # knuckles on the glass
+            elif ph == 1:
+                lean, tilt = .12, -.1                          # leaning, ankles crossed
+                hR = (18, -46)
+                fL, fR = (-2, 0), (9, 0)
+            elif ph == 2:
+                px, tilt = 6, .25                              # face to the glass
+                hL, hR = (10, -40), (14, -42)
+            else:
+                lean = .3                                      # the shove
+                fL, fR = (-12, 0), (4, 0)
+                hL, hR = (16, -44), (18, -40)
         elif st == "carry":
             bob = math.sin(ph) * 2
             stride = 12

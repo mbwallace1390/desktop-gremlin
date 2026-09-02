@@ -84,6 +84,7 @@ def fake_terrain(app, icons=(), windows=()):
         t.windows = list(windows() if callable(windows) else windows)
         t.moved = {}
         t.win_pos = {h: (l, tp) for _title, l, tp, _r, _b, h in t.windows}
+        t.win_rect = {h: (l, tp, r, b) for _title, l, tp, r, b, h in t.windows}
         t.icons_ok = True
         tg, pl = [], []
         for name, l, tp, r, b, idx in t.icons:

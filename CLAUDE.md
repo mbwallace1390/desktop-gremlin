@@ -1,7 +1,7 @@
 # Desktop Gremlin
 
 One to ten stick figures living on top of the real Windows desktop. One file,
-`desktop_gremlin.py`, ~5400 lines, tkinter + pywin32, no other dependencies.
+`desktop_gremlin.py`, ~5100 lines, tkinter + pywin32, no other dependencies.
 Windows only — it talks to the Explorer shell directly.
 
 ## Verify before believing it works

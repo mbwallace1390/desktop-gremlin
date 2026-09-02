@@ -166,8 +166,12 @@ f0, f1 = app.fighters[0], app.fighters[1]
 random.seed(8)
 f0.x = OX + W * .5
 hung = reach(f0, "hang", 4242, 12)
+if hung:
+    f0.play["until"] = 1e9          # a hang lasts 5-14s; the perch trip can take longer
 f1.x = OX + W * .55
 sat = reach(f1, "perch", 4242, 24)
+if sat:
+    f1.play["until"] = 1e9
 x0, x1 = f0.x, f1.x
 WINS[4242][1] += 40
 WINS[4242][3] += 40

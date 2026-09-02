@@ -41,7 +41,7 @@ def park(g):
 
 # --- every ride starts, runs without an exception, and puts him back -------
 print("%-10s %-8s %7s  %s" % ("ride", "started", "frames", "ends"))
-for kind in ("blink", "pogo", "skate", "float", "cannon", "jet"):
+for kind in ("pogo", "skate", "float", "cannon", "jet"):
     random.seed(31)
     for g in app.fighters:
         park(g)

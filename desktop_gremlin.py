@@ -2234,12 +2234,12 @@ SPEECH_FONT = {"tinkerer": ("Consolas", "bold"),
 # the grump rides nothing, which is the most in-character line in the table.
 RIDES = {
     "brawler":  ("cannon", "pogo"),
-    "sniper":   ("blink", "float"),
+    "sniper":   ("float",),
     "coward":   ("pogo", "float", "shoulders"),
     "showoff":  ("skate", "cannon", "shoulders", "jet"),
     "grump":    (),
-    "magpie":   ("surf", "blink", "shoulders"),
-    "zealot":   ("blink", "cannon", "jet"),
+    "magpie":   ("surf", "shoulders"),
+    "zealot":   ("cannon", "jet"),
     "tinkerer": ("skate", "float", "jet"),
     "drama":    ("float", "cannon"),
     "veteran":  ("skate", "pogo"),
@@ -2248,7 +2248,7 @@ RIDES = {
 # the rest (float, surf, shoulders) go where they please. The cannon counts:
 # it is a ballistic commute, and keeping it leisure-only made it nearly
 # extinct once travel became how rides mostly start.
-TRAVEL_RIDES = ("pogo", "skate", "jet", "blink", "cannon")
+TRAVEL_RIDES = ("pogo", "skate", "jet", "cannon")
 
 # What each of them does with one of your windows, tried in this order until
 # one fits the window's shape. perch = sit on the title bar, legs over the
@@ -3078,12 +3078,6 @@ class App:
         through to something else instead of stalling on a wish."""
         self.end_ride(f)
         K = f.K()
-        if kind == "blink":
-            f.wander_to = clamp(dest, self.ox + 80, self.ox + self.W - 80) \
-                if dest is not None else \
-                random.uniform(self.ox + 80, self.ox + self.W - 80)
-            f.set_state("blink")
-            return True
         if kind in ("pogo", "skate"):
             if not f.on_ground:
                 return False
@@ -3355,13 +3349,19 @@ class App:
         l, t, r, b = rect
         return r - l >= 200 and b - t >= 120 and not self.covers_monitor(l, t, r, b)
 
-    def visit_window(self, f, hwnd, kinds=None):
-        """Send him to this window with whichever of his plays fits it."""
+    def visit_window(self, f, hwnd):
+        """Send him to this window with whichever of his plays fits it. A
+        furious one bangs on it if banging is in his repertoire, and sits or
+        hangs scowling if not -- the mood is the halo and the face, and those
+        go up there with him."""
         rect = self.terrain.win_rect.get(hwnd)
         if not rect or not self.playable(rect):
             return False
-        kinds = PLAYS[f.kind] if kinds is None else kinds
-        for kind in random.sample(kinds, len(kinds)):
+        kinds = random.sample(PLAYS[f.kind], len(PLAYS[f.kind]))
+        if f.mood == "furious" and "knock" in kinds:
+            kinds.remove("knock")
+            kinds.insert(0, "knock")
+        for kind in kinds:
             if self.go_play(f, kind, hwnd):
                 return True
         return False
@@ -3376,17 +3376,13 @@ class App:
         if any(f.play and f.play["hwnd"] == hwnd for f in self.fighters):
             return
         # anyone not mid-brawl: an icon hunt is dropped for it, and a furious
-        # one comes to bang on it rather than sit on it. With two of them
-        # fighting most of the time, calm idlers alone were too rare.
+        # one comes too, to bang on it if he can. With two of them fighting
+        # most of the time, calm idlers alone were too rare to see.
         free = [f for f in self.fighters
                 if f.state in ("idle", "walk", "taunt", "hunt") and PLAYS[f.kind]
                 and not (f.window_shy == hwnd and self.time < f.window_cd)]
         if free:
-            f = random.choice(free)
-            kinds = PLAYS[f.kind] if f.mood != "furious" \
-                else tuple(k for k in PLAYS[f.kind] if k == "knock")
-            if kinds:
-                self.visit_window(f, hwnd, kinds)
+            self.visit_window(random.choice(free), hwnd)
 
     def begin_play(self, f):
         """He has arrived: pin him to the window and start the play. False
@@ -3867,15 +3863,14 @@ class App:
             f.chat("cursor", 1.4)
             return
 
-        # A window is a climbing frame. Not while furious, and never the one
-        # he just scrambled off: sit on it, hang under it, cling to its side,
-        # bang on it -- whichever of his own repertoire fits the window's
-        # shape. Mild anger may still climb; it just picks the knock.
+        # A window is a climbing frame, and never the one he just scrambled
+        # off: sit on it, hang under it, cling to its side, bang on it --
+        # whichever of his own repertoire fits the window's shape. A furious
+        # one goes too (the halo and the face carry the mood up there), and
+        # reaches for the knock first if he has one.
         if PLAYS[f.kind] and random.random() < .34 + .30 * f.boredom:
-            kinds = PLAYS[f.kind] if f.mood != "furious" \
-                else tuple(k for k in PLAYS[f.kind] if k == "knock")
-            hwnd = self.pick_window(f) if kinds else None
-            if hwnd and self.visit_window(f, hwnd, kinds):
+            hwnd = self.pick_window(f)
+            if hwnd and self.visit_window(f, hwnd):
                 f.boredom = max(0.0, f.boredom - .3)
                 return
 
@@ -4124,18 +4119,6 @@ class App:
             if f.on_ground and random.random() < dt * .8 * f.per["hops"]:
                 f.vy = -700 * K
 
-    def _st_blink(self, f, dt, K):
-        f.vx = 0
-        if f.st > .22 and abs(f.x - f.wander_to) > 2:
-            self.puff(f.x, f.y - 20 * f.sc, 5, f.color(), K, 8)
-            f.x = f.wander_to
-            f.y = self.ground_at(f.x)
-            f.on_ground = True
-            self.puff(f.x, f.y - 20 * f.sc, 5, f.color(), K, 8)
-        if f.st > .5:
-            f.set_state("idle")
-            f.goal = self.time + random.uniform(.4, 1.2)
-
     def _st_pogo(self, f, dt, K):
         d = f.wander_to - f.x
         f.face = 1 if d >= 0 else -1
@@ -4234,7 +4217,7 @@ class App:
         m = f.mount
         if (m is None or m.hp <= 0 or m not in self.fighters or
                 m.state in ("ko", "grabbed", "thrown", "sleep", "fight",
-                            "attack", "float", "ride", "blink", "surf")):
+                            "attack", "float", "ride", "surf")):
             self.end_ride(f)
             f.vy = -240 * K
             f.set_state("fall")
@@ -4672,7 +4655,6 @@ class App:
         "idle": _st_idle,
         "walk": _st_walk,
         "carry": _st_carry,
-        "blink": _st_blink,
         "pogo": _st_pogo,
         "skate": _st_skate,
         "float": _st_float,
@@ -4706,7 +4688,7 @@ class App:
     def physics(self, f, dt, gy):
         K = f.K()
         if f.state in ("zip", "grabbed", "ledge", "sleep",
-                       "float", "ride", "blink", "surf", "jet", "climb",
+                       "float", "ride", "surf", "jet", "climb",
                        "perch", "hang", "cling", "knock"):
             if f.state == "sleep":
                 f.vy += 1900 * K * dt
@@ -5587,11 +5569,6 @@ class App:
             fR = (math.cos(ph + math.pi) * stride, -max(0, math.sin(ph + math.pi)) * 7)
             py, lean = -30 - abs(bob) * .4, -.06
             hL, hR = (-6, -74), (7, -76)
-        elif st == "blink":
-            k2 = clamp(f.st / .5, 0, 1)
-            py, lean = -24 - 8 * math.sin(k2 * math.pi), 0.0
-            fL, fR = (-6, 0), (6, 0)
-            hL, hR = (-14, -30 - 22 * k2), (14, -30 - 22 * k2)
         elif st == "float":
             k2 = math.sin(self.time * 2 + f.seedp)
             py, lean = -32, .04

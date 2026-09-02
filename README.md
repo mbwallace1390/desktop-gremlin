@@ -204,7 +204,7 @@ out on the spot.
 The grapple gun is no longer the only way to travel, and not everything they
 do is a fight — a bored gremlin is as likely to take a joyride or wander over
 to bother a colleague. Depending on who: a pogo stick, a skateboard, a balloon
-ride (poppable, and the sniper knows it), a teleport blink, a self-launching
+ride (poppable, and the sniper knows it), a self-launching
 cannon, a jetpack that wobbles its way to a cruising height and then runs out
 of tank, riding on another one's shoulders, or surfing across the desktop
 standing on one of your actual icons — that last one obeys the same

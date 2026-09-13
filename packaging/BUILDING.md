@@ -13,6 +13,9 @@ test suite, builds a windowed one-folder executable, and launches its bounded
 PATH. It packages a ZIP, SHA-256 checksum and per-file manifest only after that
 test reports a frozen application, all modules loaded, Tk and disabled native
 rendering. The build report stays in build/windows/packaged-self-test.json.
+The required `physics_engines` check exercises an impulse, four passive limbs
+and crate translation/rotation. Both physics modules must originate inside the
+bundle; the isolated Settings window must also save and reload both new choices.
 
 `-SkipInstall` reuses the build environment. `-SkipTests` skips source tests for
 local iteration; the frozen executable smoke test still runs. Neither switch is
@@ -50,8 +53,8 @@ authorizing their publication:
 
 1. Commit and push the reviewed source, packaging files, app.ico and workflow.
 2. Check that desktop_gremlin.py declares the intended VERSION, then create and
-   push its matching tag, for example `git tag v3.1.0` followed by
-   `git push origin v3.1.0`. The tag must point at the reviewed source commit.
+   push its matching tag, for example `git tag v3.2.0` followed by
+   `git push origin v3.2.0`. The tag must point at the reviewed source commit.
 3. Wait for **Build Windows and Linux downloads** in GitHub Actions. Both native
    builds require source tests, executable smoke tests and archive checks to
    pass before one draft release is created. A manual run produces workflow

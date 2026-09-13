@@ -5,6 +5,12 @@ Windows supports Explorer icons and open windows. Linux X11 supports open
 windows and the desktop floor, including climbing, dragging gremlins and
 optional window nudges with restoration.
 
+**3.2.0 physics:** momentum-aware hits and blasts, directional bounces,
+constrained ragdoll limbs during grabs, throws and knockouts, smoother mouse
+throws, moving crates, weighted seesaws, swept body/window-edge contacts,
+moving-anchor swings, and selectable gravity and surface feel. See the
+[physics guide](PHYSICS_GUIDE.md) for controls and the simulation's limits.
+
 **3.1.0:** Linux X11 desktop support and bundled Windows/Linux downloads.
 Wayland sessions and Linux desktop icon rearrangement are not supported.
 
@@ -42,7 +48,7 @@ install no Python or pip packages. Linux needs an x64 glibc desktop compatible
 with Ubuntu 22.04 or newer and an X11 session.
 
 1. Open [GitHub Releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
-2. Under the release's **Assets**, download **DesktopGremlin-3.1.0-Windows-x64.zip**.
+2. Under the release's **Assets**, download **DesktopGremlin-3.2.0-Windows-x64.zip**.
 3. Right-click the ZIP, choose **Extract All**, then open the extracted folder.
 4. Double-click **DesktopGremlin.exe**. Keep its `_internal` folder beside it.
 
@@ -50,7 +56,7 @@ Choose the executable archive under the release's Assets. GitHub's **Source code
 downloads are for developers.
 See [the download guide](USER_DOWNLOAD_GUIDE.md) for updating and uninstalling.
 
-On Linux, download **DesktopGremlin-3.1.0-Linux-x64.tar.gz**, extract it, and
+On Linux, download **DesktopGremlin-3.2.0-Linux-x64.tar.gz**, extract it, and
 open **DesktopGremlin** inside the extracted folder. Keep `_internal` beside
 it. A small control window provides Settings, Performance, Pause, Bring them
 to my cursor, Put my windows back, and Quit. Right-click a gremlin to show it.
@@ -336,6 +342,8 @@ have restored any moved icons; deleting it removes that undo information.
 | `group_scenes` | `true` | friendships, rescues, staged comedy and quiet group activities |
 | `parkour` | `true` | pendulum swings, wall kicks, rolls, vaults, slides, planes and boosts |
 | `toy_props` | `true` | temporary crates, seesaws, ramps, fans and conveyors |
+| `physics_preset` | `normal` | normal, moon, bouncy or heavy gravity and impulse response |
+| `surface_material` | `standard` | standard, ice, rubber or sticky friction and bounce |
 | `renderer` | `tk` | Tk only; older `auto` settings cannot enable native presentation |
 | `body_theme` | `dark` | `dark` or `light`, with contrasting faces |
 | `halo_strength` | `1.0` | mood halo strength, 0.5 to 2.0 |
@@ -407,7 +415,8 @@ See [the incident report](INCIDENT_INPUT_LOCKOUT.md) for the cause and corrected
 test coverage. The normal application has no path to construct a native overlay.
 
 The figures are drawn procedurally, not from sprites: a skeleton with two-bone
-IK for the arms and legs, posed per state, then squashed and mirrored. That's
+IK for authored actions and four constrained passive limbs during grabs,
+throws and knockouts, then squashed and mirrored. That's
 why they scale cleanly from icon-sized to huge, and why adding a weapon is a
 dozen lines rather than a spritesheet.
 
@@ -415,12 +424,16 @@ Short eased transitions connect upper-body poses while planted feet and ledge
 grips stay exact. Weapons have distinct windups, recoil, and impact effects;
 projectiles use the same posed muzzle that gets drawn.
 
-Physics is one-way platforms with a ledge-grab pass — and anything climbable
-overhead gets scaled hand-over-hand and mantled, rather than bounced at; the
-leap is kept for the tall, the far, and the characters who were always going
-to bounce anyway. Every motion constant is
-multiplied by a scale factor derived from body size, so a small gremlin moves
-like a small thing rather than a slowed-down big one.
+Fighters use one-way platforms, swept body contacts at window edges and a
+ledge-grab pass. Climbable surfaces overhead can be scaled hand-over-hand and
+mantled. Impulses account for body mass, while surfaces control friction and
+bounce. Motion speeds and gravity scale with body size.
+
+The ragdoll controls four limbs around the existing authored root; it does not
+replace the fighter with a full rigid-body skeleton. Crates move and rotate,
+with conservative box contacts for terrain and stacks. Their projectile
+contacts use the polygon that is drawn. Seesaws rotate around an anchored
+pivot; ramps, fans and conveyors stay anchored. See [the physics guide](PHYSICS_GUIDE.md).
 
 ## If something goes wrong
 
@@ -446,7 +459,7 @@ screenshot.
 python tests\run_all.py
 ```
 
-41 checks on Windows; the Linux runner selects shared and Linux checks.
+46 checks on Windows; the Linux runner selects shared and Linux checks.
 Linux acceptance requires an isolated Xvfb session as documented in the Linux
 build guide. Frozen Linux acceptance also proves real input delivery and exit
 using a separate receiver process.

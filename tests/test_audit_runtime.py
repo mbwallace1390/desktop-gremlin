@@ -123,6 +123,8 @@ def bare_app(monitors):
     from gremlin_arsenal import Arsenal
     from gremlin_motion import MotionEngine
     from gremlin_social import SocialDirector
+    from gremlin_ragdoll import Ragdoll
+    app.ragdoll = Ragdoll(app, gm.CFG)
     app.fighters, app.shots = [], []
     app.arsenal = Arsenal(app, gm.CFG)
     app.motion = MotionEngine(app, gm.CFG)
@@ -132,7 +134,7 @@ def bare_app(monitors):
     app.oy = min(mon[1] for mon, work in monitors)
     app.W = max(mon[2] for mon, work in monitors) - app.ox
     app.H = max(mon[3] for mon, work in monitors) - app.oy
-    app.terrain = types.SimpleNamespace(platforms=[])
+    app.terrain = types.SimpleNamespace(platforms=[], windows=[])
     app.time = 0
     app.asleep = False
     app.mouse = {"x": -9999}

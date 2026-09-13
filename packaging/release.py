@@ -14,9 +14,10 @@ import zipfile
 PRIVATE_NAMES = frozenset(("gremlin_settings.json", "gremlin_icon_backup.json",
                            "gremlin_memory.json", "gremlin_log.txt", "gremlin.ico"))
 MODULES = frozenset(("gremlin_renderer", "gremlin_performance", "gremlin_profiles",
-                     "gremlin_arsenal", "gremlin_motion", "gremlin_social"))
+                     "gremlin_arsenal", "gremlin_motion", "gremlin_social",
+                     "gremlin_physics", "gremlin_ragdoll"))
 SMOKE_CHECKS = frozenset(("single_instance", "bundled_imports", "owned_withdrawn_tk",
-                          "simulation_and_canvas", "expansion_engines", "settings_roundtrip",
+                          "simulation_and_canvas", "expansion_engines", "physics_engines", "settings_roundtrip",
                           "memory_roundtrip", "hide_cleanup", "emergency_exit_dispatch"))
 
 

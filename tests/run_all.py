@@ -26,6 +26,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # name -> file, in rough order of how fast they are
 CHECKS = [
+    ("physics_mixed", "test_physics_mixed.py", "all physics presets, sizes and cleanup"),
+    ("physics_upgrade", "test_physics_upgrade.py", "momentum, body sweeps, materials and grabs"),
+    ("physics_arsenal", "test_physics_arsenal.py", "surface normals, ricochets and toy cover"),
+    ("physical_props", "test_physical_props.py", "dynamic crates, seesaws and moving ropes"),
+    ("ragdoll_physics", "test_ragdoll_physics.py", "joint limits, inertia and drawn recovery"),
     ("linux_runtime", "test_linux_runtime.py", "Linux storage, import and shaped lifecycle"),
     ("linux_desktop", "test_linux_desktop.py", "X11 windows, monitors and emergency exit"),
     ("linux_overlay", "test_linux_overlay.py", "real X11 cross-process input delivery"),

@@ -135,10 +135,11 @@ def self_test_report(base):
     valid = {"ok": True, "frozen": True, "native_enabled": False, "renderer": "tk",
              "version": "3.0.0",
              "modules": ["gremlin_renderer", "gremlin_performance", "gremlin_profiles",
-                         "gremlin_arsenal", "gremlin_motion", "gremlin_social"],
+                         "gremlin_arsenal", "gremlin_motion", "gremlin_social",
+                         "gremlin_physics", "gremlin_ragdoll"],
              "checks": {"single_instance": True, "bundled_imports": True,
                         "owned_withdrawn_tk": True, "simulation_and_canvas": True,
-                        "expansion_engines": True, "settings_roundtrip": True,
+                        "expansion_engines": True, "physics_engines": True, "settings_roundtrip": True,
                         "memory_roundtrip": True, "hide_cleanup": True,
                         "emergency_exit_dispatch": True}}
     release.validate_smoke_report(valid)

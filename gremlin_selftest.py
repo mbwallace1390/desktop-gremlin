@@ -11,6 +11,38 @@ import uuid
 from unittest import mock
 
 
+def _physics_check(gm, app, crate):
+    """Exercise the shipped engines after the staged expansion draw is checked."""
+    actor = app.fighters[3]
+    app.clear_expansion(actor)
+    actor.set_state("thrown")
+    actor.on_ground, actor.plat = False, None
+    actor.x = app.ox + app.W * .25
+    actor.y = app.ground_at(actor.x) - 120
+    actor.vx = actor.vy = 0.0
+    origin = actor.x
+    gm.PHYSICS.impulse(actor, 180, -260)
+    kicked = actor.vx > 0 and actor.vy < 0
+    # Lift the existing toy into free flight; an off-center impact must rotate it.
+    crate["y"] -= 120
+    start = crate["x"], crate["y"], crate["angle"]
+    app.motion.hit_prop(crate, crate["x"], crate["y"] - crate["h"] * .9, 800, -500)
+    app.update(1 / 60)
+    body = getattr(actor, "_ragdoll", None)
+    before = tuple((limb.a, limb.b) for limb in body.limbs) if body else ()
+    for _ in range(12):
+        app.update(1 / 60)
+    app.draw()
+    body = getattr(actor, "_ragdoll", None)
+    limbs = tuple((limb.a, limb.b) for limb in body.limbs) if body else ()
+    return bool(kicked and actor.x > origin + .1 and body and body.active
+        and len(limbs) == 4 and limbs != before and body.joints
+        and all(math.isfinite(v) for point in body.joints for v in point)
+        and abs(crate["x"] - start[0]) > .1 and abs(crate["y"] - start[1]) > .1
+        and abs(crate["angle"] - start[2]) > .001
+        and all(math.isfinite(crate[key]) for key in ("x", "y", "vx", "vy", "angle", "omega")))
+
+
 def run(gm, report_path):
     if not report_path or not os.path.isabs(report_path):
         return 2
@@ -74,7 +106,8 @@ def run(gm, report_path):
             report["renderer"] = app.renderer_mode
             report["modules"] = ["tkinter", "win32api", "win32gui", "win32process", "win32con",
                 "gremlin_profiles", "gremlin_paths", "gremlin_arsenal", "gremlin_motion",
-                "gremlin_social", "gremlin_performance", "gremlin_renderer"]
+                "gremlin_social", "gremlin_performance", "gremlin_renderer",
+                "gremlin_physics", "gremlin_ragdoll"]
             report["module_paths"] = {name: importlib.import_module(name).__file__
                                       for name in report["modules"]}
             report["executable"] = sys.executable
@@ -96,14 +129,20 @@ def run(gm, report_path):
                 app.canvas.find_withtag(layer) for layer in ("social", "toys", "arsenal")))
             report["checks"]["simulation_and_canvas"] = bool(app.canvas.find_all()) and all(
                 math.isfinite(v) for f in app.fighters for v in (f.x, f.y, f.hp))
+            report["checks"]["physics_engines"] = _physics_check(gm, app, crate)
             # Settings are exercised in a second owned, immediately hidden window.
             window = gm.SettingsWindow(app.root, app)
             window.win.withdraw()
             window.vars["cast"].set("veteran,tinkerer")
             window.vars["profiles"].set(json.dumps({"veteran": {"nickname": "Test", "hat": "cap"}}))
             window.vars["play_mode"].set("peaceful")
+            window.vars["physics_preset"].set("moon")
+            window.vars["surface_material"].set("ice")
             window.apply()
-            report["checks"]["settings_roundtrip"] = (gm.load_settings()["cast"] == "veteran,tinkerer"
+            saved = gm.load_settings()
+            report["checks"]["settings_roundtrip"] = (saved["cast"] == "veteran,tinkerer"
+                and saved["physics_preset"] == gm.CFG["physics_preset"] == "moon"
+                and saved["surface_material"] == gm.CFG["surface_material"] == "ice"
                 and app.fighters[0].nickname == "Test" and not app.combat_allowed())
             gm.bump("veteran", "grabbed")
             report["checks"]["memory_roundtrip"] = (gm.save_memory()

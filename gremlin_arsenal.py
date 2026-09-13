@@ -5,6 +5,8 @@ ordinary shots finish at a swept collision or a desktop edge, never a timer.
 """
 import math
 
+from gremlin_physics import material, preset, reflect, segment_contact
+
 
 WEAPONS = ("boomerang", "bubble", "freeze", "swap", "glove", "rubber", "foam")
 CONTROL = ("bubble", "freeze", "foam")
@@ -150,21 +152,26 @@ class Arsenal:
         if kind == "glove":
             # The spring launches the shooter backwards too; ordinary physics
             # carries the recoil after the release frame.
-            f.vx = -math.cos(angle) * 620 * f.K()
-            f.vy = -210 * f.K()
+            impulse = preset(self.cfg.get("physics_preset", "normal"))["impulse"]
+            f.vx = -math.cos(angle) * 620 * f.K() * impulse
+            f.vy = -210 * f.K() * impulse
             f.on_ground = False
         return True
 
     def _impact(self, shot, victim):
         owner, kind = shot["owner"], shot["k"]
+        direction, point = (shot["vx"], shot["vy"]), (shot["x"], shot["y"])
         shielded = "shield" in self.effects.get(victim, {})
         if kind in ("bubble", "freeze", "foam"):
-            self.app.hit_fighter(owner, victim, 2)
+            self.app.impact_fighter(owner, victim, 2, direction=direction, point=point)
             if not shielded:
-                self.apply_effect(victim, kind, 5 if kind == "bubble" else 4, owner)
+                applied = self.apply_effect(victim, kind, 5 if kind == "bubble" else 4, owner)
+                if applied and kind == "freeze" and abs(shot["vx"]) > .01:
+                    # A banked freeze shot pushes its cube along the incoming path.
+                    victim.vx = math.copysign(abs(victim.vx), shot["vx"])
         elif kind == "swap":
             if shielded:
-                self.app.hit_fighter(owner, victim, 2)
+                self.app.impact_fighter(owner, victim, 2, direction=direction, point=point)
             elif self._eligible(owner) and self._eligible(victim):
                 ax, ay, bx, by = owner.x, owner.y, victim.x, victim.y
                 for f, x, y in ((owner, bx, by), (victim, ax, ay)):
@@ -178,11 +185,73 @@ class Arsenal:
                     f.set_state("fall")
                     f.say("Your turn!", .8)
         else:
-            self.app.hit_fighter(owner, victim, 18 if kind == "glove" else 8)
+            self.app.impact_fighter(owner, victim, 18 if kind == "glove" else 8,
+                                    direction=direction, point=point)
 
     def _turn(self, s):
         # A boomerang returns after its outbound leg or the first obstruction.
         s["phase"], s["age"] = "return", 0.0
+
+    def _contact(self, s, x0, y0, x1, y1, radius):
+        """Pick the first crossed solid regardless of fighter/terrain list order."""
+        app, owner = self.app, s["owner"]
+        result = None
+
+        def consider(kind, hit, obj):
+            nonlocal result
+            if hit is None:
+                return
+            at, nx, ny = hit[:3]
+            # Inclusive boxes must not reflect a shot already departing a face.
+            if at <= 1e-8 and (x1 - x0) * nx + (y1 - y0) * ny >= 0:
+                return
+            if result is None or at < result[1]:
+                result = kind, at, nx, ny, obj
+
+        for f in app.fighters:
+            if f is owner or f in s["hit"] or not self._eligible(f) or getattr(f, "motion_dodging", False):
+                continue
+            consider("fighter", segment_contact(x0, y0, x1, y1,
+                     f.x - 14 * f.sc - radius, f.y - 76 * f.sc - radius,
+                     f.x + 14 * f.sc + radius, f.y + radius), f)
+        returning = s["k"] == "boomerang" and s["phase"] == "return"
+        if not returning:
+            for cx, cy, hw, hh, target in app.terrain.bounds:
+                if s["pierce"] and s["tgt"] != (target["kind"], target["key"]):
+                    continue
+                consider("target", segment_contact(x0, y0, x1, y1,
+                         cx - hw - radius, cy - hh - radius,
+                         cx + hw + radius, cy + hh + radius), target)
+            floor = app.floor_contact(x0, y0 + radius, x1, y1 + radius)
+            if floor:
+                consider("floor", (floor[0], 0.0, -1.0), floor[1])
+            motion = getattr(app, "motion", None)
+            if motion:
+                hit = motion.projectile_contact(x0, y0, x1, y1, radius)
+                if hit:
+                    consider("prop", hit, hit[3])
+            left, right = app.ox + radius, app.ox + app.W - radius
+            dx = x1 - x0
+            if dx < 0 and x1 < left:
+                consider("edge", (max(0.0, (left - x0) / dx), 1.0, 0.0), left)
+            elif dx > 0 and x1 > right:
+                consider("edge", (max(0.0, (right - x0) / dx), -1.0, 0.0), right)
+        return result
+
+    def _bounce(self, s, nx, ny, surface):
+        properties = material(surface)
+        # Rubber ammunition stays lively on ordinary ground, while sticky
+        # surfaces absorb it and ice preserves the tangential part of its speed.
+        restitution = .1 if surface == "sticky" else min(.98, .61 + 1.1 * properties["restitution"])
+        restitution = min(.98, restitution * preset(self.cfg.get("physics_preset", "normal"))["impulse"])
+        s["vx"], s["vy"] = reflect(s["vx"], s["vy"], nx, ny, restitution,
+                                     min(.9, .1 * properties["friction"]))
+        # A tiny outward separation avoids hitting the same inclusive face at t=0.
+        separation = max(.05, .08 * s["sc"])
+        s["x"] += nx * separation
+        s["y"] += ny * separation
+        s["bounces"] += 1
+        return s["bounces"] < 6
 
     def _flight(self, s, dt):
         app, owner, kind = self.app, s["owner"], s["k"]
@@ -199,7 +268,8 @@ class Arsenal:
                 if catching:
                     owner.say("Caught it!", .8)
                 else:
-                    self.app.hit_fighter(owner, owner, 7)
+                    self.app.impact_fighter(owner, owner, 7,
+                                            direction=(s["vx"], s["vy"]), point=(x0, y0))
                     owner.say("...ow.", 1)
                 return False
             s["vx"], s["vy"] = dx / distance * speed, dy / distance * speed
@@ -207,76 +277,47 @@ class Arsenal:
             # faster than the return speed must not retain a shot forever.
             if s["age"] > max(5.0, math.hypot(app.W, app.H) / max(1, speed) * 3):
                 return False
-        s["vy"] += s["g"] * dt
-        x1, y1 = x0 + s["vx"] * dt, y0 + s["vy"] * dt
-        s["distance"] += math.hypot(x1 - x0, y1 - y0)
-        event, contact, obj = None, 2.0, None
+        s["vy"] += s["g"] * preset(self.cfg.get("physics_preset", "normal"))["gravity"] * dt
         radius = max(3.0, 7 * s["sc"])
-        for f in app.fighters:
-            if f is owner or f in s["hit"] or not self._eligible(f) or getattr(f, "motion_dodging", False):
-                continue
-            at = app.segment_box(x0, y0, x1, y1, f.x - 14 * f.sc - radius,
-                                 f.y - 76 * f.sc - radius, f.x + 14 * f.sc + radius,
-                                 f.y + radius)
-            if at is not None and at < contact:
-                event, contact, obj = "fighter", at, f
-        for cx, cy, hw, hh, target in app.terrain.bounds:
-            if kind == "boomerang" and s["phase"] == "return":
-                continue
-            if s["pierce"] and s["tgt"] != (target["kind"], target["key"]):
-                continue
-            at = app.segment_box(x0, y0, x1, y1, cx - hw, cy - hh, cx + hw, cy + hh)
-            if at is not None and at < contact:
-                event, contact, obj = "target", at, target
-        floor = None if kind == "boomerang" and s["phase"] == "return" \
-            else app.floor_contact(x0, y0, x1, y1)
-        if floor and floor[0] < contact:
-            event, contact, obj = "floor", floor[0], floor[1]
-        if event:
+        remaining = dt
+        # Each pass either completes this step or consumes a ricochet, so even
+        # a very large step through a cramped corner has at most six contacts.
+        while remaining > 1e-8:
+            x0, y0 = s["x"], s["y"]
+            x1, y1 = x0 + s["vx"] * remaining, y0 + s["vy"] * remaining
+            hit = self._contact(s, x0, y0, x1, y1, radius)
+            if hit is None:
+                s["x"], s["y"] = x1, y1
+                s["distance"] += math.hypot(x1 - x0, y1 - y0)
+                break
+            event, contact, nx, ny, obj = hit
             s["x"], s["y"] = x0 + (x1 - x0) * contact, y0 + (y1 - y0) * contact
+            s["distance"] += math.hypot(s["x"] - x0, s["y"] - y0)
+            remaining *= 1.0 - contact
             if event == "fighter":
                 s["hit"].add(obj)
                 self._impact(s, obj)
-                if kind == "boomerang":
-                    self._turn(s)
-                    return True
-                if kind == "rubber":
-                    s["vx"] *= -.85
-                    s["vy"] = -abs(s["vy"]) - 90 * owner.K()
-                    s["bounces"] += 1
-                    return s["bounces"] < 6
-                return False
-            if event == "target":
+            elif event == "target":
                 app.hit_target(owner, obj, s["x"], s["y"])
+            elif event == "prop":
+                # Soft control rounds still hit cover, with a gentle physical nudge.
+                strength = .25 if kind == "freeze" else .1 if kind in ("bubble", "foam") else 1.0
+                app.motion.hit_prop(obj, s["x"], s["y"], s["vx"], s["vy"], strength=strength)
             if kind == "boomerang":
-                # The return arc passes the obstacle it just touched; reusing
-                # an inclusive contact at t=0 would pin it there permanently.
+                # Returning rounds pass scenery so the first obstruction cannot
+                # strand their owner with an unreachable projectile.
                 self._turn(s)
                 return True
-            if kind == "rubber":
-                s["bounces"] += 1
-                if event == "floor":
-                    s["y"] = obj - radius - 1
-                    s["vy"] = -max(150 * owner.K(), abs(s["vy"]) * .85)
-                else:
-                    s["x"] -= math.copysign(radius + 1, s["vx"])
-                    s["vx"] *= -.9
-                return s["bounces"] < 6
-            return False
-        s["x"], s["y"] = x1, y1
-        left, right = app.ox + radius, app.ox + app.W - radius
-        if x1 < left or x1 > right:
-            if kind == "rubber":
-                s["x"] = _clamp(x1, left, right)
-                s["vx"] *= -.9
-                s["bounces"] += 1
-                return s["bounces"] < 6
-            if kind == "boomerang":
-                if s["phase"] == "out":
-                    self._turn(s)
-            else:
+            if kind != "rubber":
                 return False
-        if y1 < app.oy - 60 or y1 > app.oy + app.H + 60:
+            surface = self.cfg.get("surface_material", "standard")
+            if event == "prop":
+                surface = obj.get("material", surface)
+            if not self._bounce(s, nx, ny, surface):
+                return False
+        # Gravity-bearing arcs can leave the top and descend into the desktop.
+        # Straight shots still finish once their path leaves the visible world.
+        if (s["y"] < app.oy - 60 and s["g"] <= 0) or s["y"] > app.oy + app.H + 60:
             if kind == "boomerang":
                 if s["phase"] == "out":
                     self._turn(s)
@@ -336,7 +377,7 @@ class Arsenal:
         else:
             x0, y0 = f.x, f.y
             f.vx = f.vx * max(0, 1 - dt * .35) if kind == "freeze" else 0.0
-            f.vy += 1400 * k * dt
+            f.vy += 1400 * k * preset(self.cfg.get("physics_preset", "normal"))["gravity"] * dt
             x1, y1 = x0 + f.vx * dt, y0 + f.vy * dt
             if kind == "freeze":
                 # Swept cube versus the actual window body, not only its top.

@@ -35,6 +35,7 @@ from tkinter import ttk
 from gremlin_profiles import (normalize_cast, normalize_profiles, selected_cast,
                               apply_profile, draw_accessory, ProfilesPanel)
 from gremlin_paths import runtime_paths, startup_command
+import gremlin_physics as PHYSICS
 
 IS_WINDOWS = sys.platform.startswith("win")
 if IS_WINDOWS:
@@ -59,7 +60,7 @@ if IS_WINDOWS:
 elif sys.platform != "linux":
     raise RuntimeError("Desktop Gremlin supports Windows and Linux X11.")
 
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 DEBUG = "--debug" in sys.argv
 HERE, DATA_DIR = runtime_paths(__file__)
 SETTINGS_PATH = os.path.join(DATA_DIR, "gremlin_settings.json")
@@ -246,6 +247,8 @@ DEFAULTS = {
     "group_scenes": True,
     "parkour": True,
     "toy_props": True,
+    "surface_material": "standard",
+    "physics_preset": "normal",
     "renderer": "tk",        # native desktop presentation is quarantined
     "body_theme": "dark",
     "halo_strength": 1.0,
@@ -279,7 +282,9 @@ def load_settings():
               "idle_minutes": (.5, 120.0), "crowd": (1, len(ROSTER)),
               "halo_strength": (.5, 2.0), "effects_quality": (.25, 1.0)}
     choices = {"renderer": ("tk",), "body_theme": ("dark", "light"),
-               "play_mode": ("peaceful", "mischief", "battle")}
+               "play_mode": ("peaceful", "mischief", "battle"),
+               "surface_material": tuple(PHYSICS.MATERIALS),
+               "physics_preset": tuple(PHYSICS.PRESETS)}
     for k, v in got.items():
         if k in ("cast", "profiles"):
             s[k] = (normalize_cast if k == "cast" else normalize_profiles)(v, ROSTER)
@@ -1591,6 +1596,8 @@ class SettingsWindow:
         check("group_scenes", "Friendships and group scenes")
         check("parkour", "Parkour, swings and paper planes")
         check("toy_props", "Build temporary playground toys")
+        choice("physics_preset", "Physics", tuple(PHYSICS.PRESETS))
+        choice("surface_material", "Surface feel", tuple(PHYSICS.MATERIALS))
         check("react_to_windows", "React to my windows and follow focus")
         check("sleep_when_idle", "Sleep when I'm away")
         slider("idle_minutes", "Minutes before sleeping", 0.5, 120, 0.5)
@@ -2923,6 +2930,8 @@ class App:
         self.shake_t = self.shake_m = 0.0
         self.sx = self.sy = 0.0
         self.mouse = {"x": -9999, "y": -9999, "t": -99, "vx": 0, "vy": 0}
+        self.cursor_history = PHYSICS.CursorHistory()
+        self._cursor_clock = 0.0
         self.hover = None
         self.fg = None
         self.asleep = False
@@ -2956,6 +2965,8 @@ class App:
         from gremlin_arsenal import Arsenal
         from gremlin_motion import MotionEngine
         from gremlin_social import SocialDirector
+        from gremlin_ragdoll import Ragdoll
+        self.ragdoll = Ragdoll(self, CFG)
         self.arsenal = Arsenal(self, CFG)
         self.motion = MotionEngine(self, CFG)
         self.social = SocialDirector(self, CFG, lambda: MEM, mark_memory_dirty)
@@ -3441,7 +3452,13 @@ class App:
         f.grabbed = True
         self.end_ride(f)
         f.stunt = False
-        f.gx, f.gy = e.x + self.ox, e.y + self.oy + 58 * f.sc
+        # Preserve the actual picked point, rather than jumping to a fixed grip.
+        f.grab_offset = (f.x - e.x - self.ox, f.y - e.y - self.oy)
+        f.grab_anchor = (e.x + self.ox, e.y + self.oy)
+        f.grab_local = rot(-f.grab_offset[0], -f.grab_offset[1], -f.tumble)
+        f.gx, f.gy = f.x, f.y
+        self.cursor_history.samples.clear()
+        self.record_cursor_sample(e.x + self.ox, e.y + self.oy)
         f.set_state("grabbed")
         f.anger = clamp(f.anger + .28 * f.per["grudge"], 0, 1)
         bump(f.kind, "grabbed")
@@ -3454,7 +3471,9 @@ class App:
     def on_drag(self, e):
         for f in self.fighters:
             if f.grabbed:
-                f.gx, f.gy = e.x + self.ox, e.y + self.oy + 58 * f.sc
+                dx, dy = f.grab_offset
+                f.grab_anchor = (e.x + self.ox, e.y + self.oy)
+                f.gx, f.gy = e.x + self.ox + dx, e.y + self.oy + dy
 
     def on_up(self, e):
         for f in self.fighters:
@@ -3462,9 +3481,15 @@ class App:
                 continue
             f.grabbed = False
             lk = .5 + .5 * f.K()
-            f.vx = clamp(self.mouse["vx"], -1300, 1300) * lk
-            f.vy = clamp(self.mouse["vy"], -1300, 1300) * lk - 120 * f.K()
-            f.vr = clamp(f.vx / (110 * f.K()), -13, 13)
+            velocity = self.cursor_history.velocity()
+            vx, vy = velocity if velocity is not None else (self.mouse["vx"], self.mouse["vy"])
+            f.vx = clamp(vx, -1300, 1300) * lk
+            f.vy = clamp(vy, -1300, 1300) * lk
+            # Torque depends on the lever arm from the torso to the grab point.
+            dx, dy = getattr(f, "grab_offset", (0., 58 * f.sc))
+            lever_x, lever_y = -dx, 34 * f.sc - dy
+            f.vr = clamp(f.vr + (lever_x * f.vy - lever_y * f.vx) /
+                         max(400., (38 * f.sc) ** 2), -13, 13)
             bump(f.kind, "thrown")
             f.set_state("thrown")
             f.yell("thrown", 1.4)
@@ -3475,8 +3500,6 @@ class App:
             if sample is None:
                 return
             nx, ny, pressed = sample
-            if not pressed and any(f.grabbed for f in self.fighters):
-                self.on_up(None)
         else:
             pt = wt.POINT()
             try:
@@ -3491,9 +3514,16 @@ class App:
         if abs(nx - self.mouse["x"]) + abs(ny - self.mouse["y"]) > 1:
             self.mouse["t"] = self.time
         self.mouse["x"], self.mouse["y"] = nx, ny
+        self._cursor_clock += max(0., dt)
+        self.record_cursor_sample(nx, ny)
+        if not IS_WINDOWS and not pressed and any(f.grabbed for f in self.fighters):
+            self.on_up(None)
         self.hover = self.near_fighter(nx, ny)
         self.poll_renderer_input()
         self.scare(dt)
+
+    def record_cursor_sample(self, x, y, when=None):
+        self.cursor_history.add(x, y, self._cursor_clock if when is None else when)
 
     def poll_renderer_input(self):
         if not hasattr(self.canvas, "poll_input"):
@@ -4558,6 +4588,7 @@ class App:
         nx, ny = rot(0, -26, lean)
         neck = (px + nx, py + ny)
         elb = ik(neck[0], neck[1] - 1, hR[0], hR[1], 13, 13, 1)
+        elb = self.ragdoll.joints(f, (None, None, None, elb))[3]
         a = math.atan2(hR[1] - elb[1], hR[0] - elb[0])
         tx, ty = rot(MUZZLE_TIP.get(f.weapon, 0), 0, a)
         return P(hR[0] + tx, hR[1] + ty)
@@ -4731,6 +4762,33 @@ class App:
         elif weapon in ("fish", "balloon", "anvil", "piano"):
             self.puff(x, y, 4, color, k, 9)
 
+    def impact_fighter(self, att, vic, dmg, direction=None, strength=1.0, point=None):
+        """Carry impact geometry through the original three-argument damage gate."""
+        previous = getattr(self, "_impact_context", None)
+        self._impact_context = (direction, strength, point)
+        try:
+            return self.hit_fighter(att, vic, dmg)
+        finally:
+            self._impact_context = previous
+
+    def blast_fighters(self, owner, x, y, radius, damage, inward=False):
+        if radius <= 0 or not self.combat_allowed():
+            return
+        for f in self.fighters:
+            if f is owner or f.hp <= 0:
+                continue
+            dx, dy = f.x - x, f.y - 30 * f.sc - y
+            distance = math.hypot(dx, dy)
+            if distance >= radius:
+                continue
+            falloff = 1 - distance / radius
+            # Damage and force both fall with distance; even an edge hit registers.
+            dealt = max(1, round(damage * (.2 + .8 * falloff)))
+            if inward:
+                dx, dy = -dx, -dy
+            self.impact_fighter(owner, f, dealt, (dx, dy), .2 + .8 * falloff, (x, y))
+        self.motion.blast(x, y, radius, (-1 if inward else 1) * (250 + damage * 9))
+
     def hit_fighter(self, att, vic, dmg):
         if not self.combat_allowed():
             return
@@ -4741,6 +4799,7 @@ class App:
             dmg = arsenal.filter_damage(att, vic, dmg)
             if dmg <= 0:
                 return
+        incoming_velocity = vic.vx, vic.vy
         self.social.on_hit(att, vic, dmg)
         self.clear_expansion(vic)
         self.drop_icon(vic)         # damage interrupts carrying, including a knockout
@@ -4749,9 +4808,25 @@ class App:
             self.end_ride(vic)
         vic.hp -= dmg
         k = vic.K()
+        context = getattr(self, "_impact_context", None)
+        direction, strength, point = context or (None, 1., None)
         d = 1 if vic.x >= att.x else -1
-        vic.vx = d * (250 + dmg * 9) * k
-        vic.vy = -(180 + dmg * 5) * k
+        if direction is None:
+            direction = (d * (250 + dmg * 9), -(180 + dmg * 5))
+        dx, dy = direction
+        length = math.hypot(dx, dy)
+        if length < 1e-6:
+            dx, dy, length = 0., -1., 1.
+        d = 1 if dx >= 0 else -1
+        force = math.hypot(250 + dmg * 9, 180 + dmg * 5) * k
+        force *= strength * PHYSICS.preset(CFG["physics_preset"])["impulse"]
+        vic.vx, vic.vy = incoming_velocity
+        PHYSICS.impulse(vic, dx / length * force, dy / length * force)
+        # An off-center hit adds angular momentum as well as linear momentum.
+        lever_y = -12 * vic.sc if point is None else point[1] - (vic.y - 34 * vic.sc)
+        lever_x = 0. if point is None else point[0] - vic.x
+        torque = (lever_x * dy - lever_y * dx) / length * force
+        vic.vr = clamp(vic.vr + torque / max(500., PHYSICS.mass(vic) * (38 * vic.sc) ** 2), -13, 13)
         vic.on_ground = False
         vic.anger = clamp(vic.anger + .07 * vic.per["grudge"], 0, 1)
         vic.hit_at, vic.hit_power, vic.hit_side = self.time, min(1.0, dmg / 22.0), d
@@ -4762,7 +4837,7 @@ class App:
         if vic.hp <= 0:
             vic.hp = 0
             vic.set_state("ko")
-            vic.vr = random.uniform(-9, 9)
+            vic.vr = clamp(vic.vr + d * 2, -13, 13)
             # a running score, so a losing streak can mean something later
             bump(att.kind, "wins")
             bump(vic.kind, "losses")
@@ -5059,9 +5134,14 @@ class App:
                 return
         s = f.state
         gy = self.ground_at(f.x, f.y)
+        previous_vx = f.vx
         step = self.STATES.get(s)
         if step is not None and step(self, f, dt, K):
             return
+        if f.on_ground and s in ("walk", "hunt", "fight", "carry"):
+            # Locomotion asks for acceleration; low-friction ground limits grip.
+            grip = min(1., PHYSICS.material(CFG["surface_material"])["friction"])
+            f.vx = lerp(previous_vx, f.vx, grip)
 
         # parachute: the nervous deploy on any long fall (their idea of a
         # transport is not hitting the ground), the fearless mostly plummet
@@ -5072,6 +5152,7 @@ class App:
             f.vy = min(f.vy, 300 * K)
 
         self.physics(f, dt, gy)
+        self.ragdoll.update(f, dt)
 
         if f.chute:
             if f.on_ground or f.state not in ("fall", "thrown"):
@@ -5111,7 +5192,9 @@ class App:
             f.chat("getup", 1.7)
 
     def _st_idle(self, f, dt, K):
-        f.vx = approach(f.vx, 0, 900 * K * dt)
+        belt = self.motion.surface_velocity(f) if f.on_ground else 0.
+        grip = PHYSICS.material(CFG["surface_material"])["friction"] if f.on_ground else 1.
+        f.vx = approach(f.vx, belt, 900 * K * dt * grip)
         if self.time > f.goal:
             self.decide(f)
 
@@ -5675,9 +5758,21 @@ class App:
             self.start_attack(f, at=(self.mouse["x"], self.mouse["y"]))
 
     def _st_grabbed(self, f, dt, K):
-        f.x = lerp(f.x, f.gx, 1 - pow(.0008, dt))
-        f.y = lerp(f.y, f.gy, 1 - pow(.0008, dt))
-        f.vx = f.vy = 0
+        # Substepped damped spring retains inertia without an unstable stiff solve.
+        for _ in range(4):
+            h = min(dt, .05) / 4
+            if hasattr(f, "grab_anchor"):
+                rx, ry = rot(*f.grab_local, f.tumble)
+                f.gx, f.gy = f.grab_anchor[0] - rx, f.grab_anchor[1] - ry
+            ax, ay = (f.gx - f.x) * 210 - f.vx * 24, (f.gy - f.y) * 210 - f.vy * 24
+            f.vx = clamp(f.vx + ax * h, -1600, 1600)
+            f.vy = clamp(f.vy + ay * h, -1600, 1600)
+            f.x += f.vx * h
+            f.y += f.vy * h
+            dx, dy = getattr(f, "grab_offset", (0., 58 * f.sc))
+            torque = (-dx * ay - (34 * f.sc - dy) * ax) / max(500., (38 * f.sc) ** 2)
+            f.vr = clamp(f.vr + (torque - 18 * math.sin(f.tumble) - 5 * f.vr) * h, -10, 10)
+            f.tumble += f.vr * h
         f.on_ground = False
 
     def _st_thrown(self, f, dt, K):
@@ -5736,22 +5831,47 @@ class App:
     # ==================================================================
     def physics(self, f, dt, gy):
         K = f.K()
+        gravity = 1900 * K * PHYSICS.preset(CFG["physics_preset"])["gravity"]
+        surface = PHYSICS.material(CFG["surface_material"])
+        restitution = max(surface["restitution"], .7 if CFG["physics_preset"] == "bouncy" else 0.)
         if f.state in ("zip", "grabbed", "ledge", "sleep",
                        "float", "ride", "surf", "jet", "climb",
                        "perch", "hang", "cling", "knock"):
             if f.state == "sleep":
-                f.vy += 1900 * K * dt
+                f.vy += gravity * dt
                 f.y = min(gy, f.y + f.vy * dt)
                 if f.y >= gy:
                     f.y, f.vy, f.on_ground = gy, 0, True
             return
 
-        f.vy += 1900 * K * dt
-        prev_y = f.y
+        f.vy += gravity * dt
+        prev_x, prev_y = f.x, f.y
         was_air = not f.on_ground
         fall_speed = f.vy
         f.x += f.vx * dt
         f.y += f.vy * dt
+
+        # Sweep the airborne body against window sides/undersides. Tops remain
+        # one-way feet platforms so walking and deliberate window climbs work.
+        if f.state in ("thrown", "ko", "fall", "jump"):
+            body_contact = None
+            hw, height = 12 * f.sc, 58 * f.sc
+            for _title, left, top, right, bottom, _key in self.terrain.windows:
+                hit = PHYSICS.segment_contact(prev_x, prev_y, f.x, f.y,
+                    left - hw, top, right + hw, bottom + height)
+                if hit is not None and hit[2] != -1 and (body_contact is None or hit[0] < body_contact[0]):
+                    # Actors already inside a desktop window are drawn over its
+                    # contents; a new contact requires starting outside its body.
+                    if left - hw < prev_x < right + hw and top < prev_y < bottom + height:
+                        continue
+                    body_contact = hit
+            if body_contact is not None:
+                at, nx, ny = body_contact
+                f.x = lerp(prev_x, f.x, at) + nx * .5
+                f.y = lerp(prev_y, f.y, at) + ny * .5
+                f.vx, f.vy = PHYSICS.reflect(f.vx, f.vy, nx, ny, restitution, surface["friction"] * .05)
+                f.vr = clamp(f.vr + nx * fall_speed / max(30., 90 * f.sc), -13, 13)
+                f.skid = .5
 
         # Off one side and back on the other, keeping height and speed. Two
         # things send him round: getting WRAP past the edge, or simply being out
@@ -5775,6 +5895,7 @@ class App:
         if past or (off_side and f.out > OUT_MAX):
             self.puff(f.x, f.y - 20 * f.sc, 4, DUST, K, 10)
             f.x = (self.ox + self.W - 24) if f.x < self.ox else (self.ox + 24)
+            prev_x = f.x  # wrapping is relocation, never a sweep across the desktop
             f.out = 0.0
             self.puff(f.x, f.y - 20 * f.sc, 4, DUST, K, 10)
         elif f.out > OUT_MAX:
@@ -5783,6 +5904,7 @@ class App:
             mon, work = self.monitor_at(f.x, f.y)
             f.x = clamp(f.x, mon[0] + 24, mon[2] - 24)
             f.y = clamp(f.y, mon[1] + 40, work[3])
+            prev_x, prev_y = f.x, f.y
             f.vy = min(f.vy, 0)
             f.out = 0.0
         if f.y < self.oy - CEILING:
@@ -5796,16 +5918,24 @@ class App:
         f.on_ground = False
         f.plat = None
         landed_on = (gy, "floor", None) if f.vy >= 0 and f.y >= gy else None
+        landed_x = f.x
         for x0, x1, py, kind, key in self.terrain.platforms + self.motion.platforms():
-            if f.x < x0 - 6 or f.x > x1 + 6:
+            crossing = clamp((py - prev_y) / max(1e-9, f.y - prev_y), 0., 1.)
+            contact_x = lerp(prev_x, f.x, crossing)
+            tested_x = contact_x if was_air else f.x
+            if tested_x < x0 - 6 or tested_x > x1 + 6:
                 continue
             if f.vy >= 0 and prev_y <= py + 2 and f.y >= py \
                     and (landed_on is None or py < landed_on[0]):
                 # Icons arrive before windows, not in collision order. The
                 # highest crossed surface wins, including the work-area floor.
                 landed_on = (py, kind, key)
+                landed_x = f.x if x0 - 6 <= f.x <= x1 + 6 else contact_x
         if landed_on is not None:
             f.y, kind, key = landed_on
+            if kind != "floor":
+                f.x = landed_x
+            f.physics_impact_vy = fall_speed if was_air else 0.
             f.vy, f.on_ground, f.plat = 0, True, (kind, key)
 
         if f.on_ground and was_air:
@@ -5821,6 +5951,11 @@ class App:
                 f.set_state("fight" if f.mode == "fight" and f.foe and f.foe.hp > 0
                             else ("hunt" if f.target else
                                   ("walk" if f.play else "idle")))
+            if f.state in ("thrown", "ko") and fall_speed * restitution > 100 * K:
+                f.vy = -fall_speed * restitution
+                f.vx *= max(0., 1 - surface["friction"] * .08)
+                f.y -= .5
+                f.on_ground, f.plat = False, None
         if not f.on_ground and f.vy < -30 * K:
             f.squash = -.35
 
@@ -5852,7 +5987,8 @@ class App:
                                 "wallslide", "carry"):
             f.set_state("fall")
         if f.on_ground and f.state not in ("walk", "hunt", "fight", "carry"):
-            f.vx = approach(f.vx, 0, 2000 * K * dt)
+            belt = self.motion.surface_velocity(f)
+            f.vx = approach(f.vx, belt, 2000 * K * dt * surface["friction"])
 
     # ==================================================================
     #  global tick
@@ -6043,12 +6179,12 @@ class App:
                 continue
             x0, y0 = s["x"], s["y"]
             s["life"] -= dt
-            s["vy"] += s["g"] * dt
+            s["vy"] += s["g"] * PHYSICS.preset(CFG["physics_preset"])["gravity"] * dt
             s["x"] += s["vx"] * dt
             s["y"] += s["vy"] * dt
             k = s["owner"].K()
             sx, sy = s["x"], s["y"]
-            hit_t = hit_f = None
+            hit_t = hit_f = hit_prop = None
             first = 1.0
             tgt = s.get("tgt")
             if not s.get("pierce") or tgt is not None:
@@ -6066,17 +6202,21 @@ class App:
                                       f.y - 80 * f.sc, f.x + 18 * f.sc, f.y + 8)
                 if at is not None and at <= first:
                     first, hit_f, hit_t = at, f, None
+            prop_contact = self.motion.projectile_contact(x0, y0, sx, sy, 2 * s["owner"].sc)
+            if prop_contact is not None and prop_contact[0] < first:
+                first, _nx, _ny, hit_prop = prop_contact
+                hit_t = hit_f = None
             gy = self.ground_at(sx, y0)
             contact = self.floor_contact(x0, y0, sx, sy)
             floor = contact is not None
             if floor:
                 at, floor_y = contact
-                if at < first or (hit_t is None and hit_f is None):
-                    first, hit_t, hit_f = at, None, None
+                if at < first or (hit_t is None and hit_f is None and hit_prop is None):
+                    first, hit_t, hit_f, hit_prop = at, None, None, None
                     gy = floor_y
                 else:
                     floor = False
-            if hit_t or hit_f or floor:
+            if hit_t or hit_f or hit_prop is not None or floor:
                 # Stop at first contact, so a later target in this frame
                 # cannot take the hit or move the explosion past its victim.
                 sx, sy = lerp(x0, sx, first), lerp(y0, sy, first)
@@ -6123,17 +6263,21 @@ class App:
                 continue
             fused = s["k"] in FUSED_PROJECTILES
             stationary = abs(s["vx"]) + abs(s["vy"]) + abs(s["g"]) < 1e-6
-            if not fused and stationary and s["life"] <= 0 and not (hit_t or hit_f or floor):
+            if not fused and stationary and s["life"] <= 0 and not (hit_t or hit_f or hit_prop is not None or floor):
                 continue
             # Ordinary rounds finish their visible flight. Their short old
             # timers limited small gremlins to a few hundred pixels and also
             # made elevated arrows/balloons disappear before landing. Only
             # actual explosive fuses may end a moving shot in mid-air.
             fuse_expired = fused and s["life"] <= 0
-            if not (hit_t or hit_f or floor or fuse_expired):
+            if not (hit_t or hit_f or hit_prop is not None or floor or fuse_expired):
                 live.append(s)
                 continue
 
+            if hit_prop is not None:
+                self.motion.hit_prop(hit_prop, sx, sy, s["vx"], s["vy"],
+                                     1.5 if s["k"] in DROPPERS else .45)
+                self.spark(sx, sy, 5, WOOD, 150, k)
             if s["k"] == "blackhole":
                 # implodes: everything nearby is pulled IN, icons included --
                 # blast_icons with a negative power walks its push backwards
@@ -6148,12 +6292,7 @@ class App:
                     if (cx2 - sx) ** 2 + (cy2 - sy) ** 2 < rad * rad:
                         self.hit_target(s["owner"], t, sx, sy)
                         break
-                for f in self.fighters:
-                    if f is s["owner"] or f.hp <= 0:
-                        continue
-                    if dist(sx, sy, f.x, f.y - 30 * f.sc) < rad:
-                        self.hit_fighter(s["owner"], f, 8)
-                        f.vx = (1 if sx > f.x else -1) * 300 * f.K()
+                self.blast_fighters(s["owner"], sx, min(sy, gy), rad, 8, inward=True)
             elif s["k"] in ("bomb", "rocket"):
                 big = s["k"] == "rocket"
                 self.boom(sx, min(sy, gy), 70 if big else 56, k, big)
@@ -6168,21 +6307,19 @@ class App:
                     if (cx - sx) ** 2 + (cy - sy) ** 2 < rad2:
                         self.hit_target(s["owner"], t, sx, sy)
                         break
-                for f in self.fighters:
-                    if f is not s["owner"] and f.hp > 0 and \
-                            dist(sx, sy, f.x, f.y - 30 * f.sc) < rad:
-                        self.hit_fighter(s["owner"], f, 26 if big else 18)
+                self.blast_fighters(s["owner"], sx, min(sy, gy), rad, 26 if big else 18)
             elif s["k"] in DROPPERS:
                 self.puff(sx, min(sy, gy), 8, DUST, k, 14)
                 self.shake(.22, 8 * k)
                 self.blast_icons(sx, min(sy, gy), 90, 40 * (.5 + .5 * k))
                 if hit_f:
-                    self.hit_fighter(s["owner"], hit_f,
-                                     24 if s["k"] == "anvil" else 20)
+                    self.impact_fighter(s["owner"], hit_f,
+                                        24 if s["k"] == "anvil" else 20,
+                                        (s["vx"], s["vy"]), point=(sx, sy))
                     hit_f.squash = 1.3          # flattened, cartoon-law
                 elif hit_t:
                     self.hit_target(s["owner"], hit_t, sx, sy)
-            elif s["k"] in TRAPS:
+            elif s["k"] in TRAPS and hit_prop is None:
                 # wherever it stops, it becomes a ground prop and waits
                 lx = clamp(sx, self.ox + 30, self.ox + self.W - 30)
                 self.traps.append({"k": s["k"], "x": lx,
@@ -6192,7 +6329,8 @@ class App:
                 self.puff(lx, self.ground_at(lx, y0), 2, DUST, k, 6)
             elif s["k"] == "wballoon":
                 if hit_f:
-                    self.hit_fighter(s["owner"], hit_f, 3)
+                    self.impact_fighter(s["owner"], hit_f, 3,
+                                        (s["vx"], s["vy"]), point=(sx, sy))
                 elif hit_t:
                     self.hit_target(s["owner"], hit_t, sx, sy)
                 self.puff(sx, min(sy, gy), 10, WATER, k, 16)
@@ -6209,10 +6347,11 @@ class App:
                     self.stains = [st for st in self.stains
                                    if dist(sx, sy, st["x"], st["y"]) > rad]
             elif hit_f:
-                self.hit_fighter(s["owner"], hit_f,
+                self.impact_fighter(s["owner"], hit_f,
                                  {"arrow": 10, "laser": 13, "pellet": 4,
                                   "harpoon": 8, "magnet": 6,
-                                  "confetti": 1}.get(s["k"], 8))
+                                  "confetti": 1}.get(s["k"], 8),
+                                  (s["vx"], s["vy"]), point=(sx, sy))
                 if s["k"] == "confetti":
                     # ammunition is a mood: whatever he was feeling, now he
                     # is having a wonderful time
@@ -6980,6 +7119,7 @@ class App:
             target = torso + target[4:6] + hands
         else:
             f.pose_from = None
+        target = self.ragdoll.pose(f, target)
         f.pose_last, f.pose_last_state, f.pose_time = target, f.state, self.time
         return target
 
@@ -7005,6 +7145,7 @@ class App:
         kneeR = ik(px, py, fR[0], fR[1], 16, 16, -1)
         elbL = ik(neck[0], neck[1] - 1, hL[0], hL[1], 13, 13, 1)
         elbR = ik(neck[0], neck[1] - 1, hR[0], hR[1], 13, 13, 1)
+        kneeL, kneeR, elbL, elbR = self.ragdoll.joints(f, (kneeL, kneeR, elbL, elbR))
 
         dark = f.body()
         self.layer(tb)

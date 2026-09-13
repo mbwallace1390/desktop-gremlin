@@ -14,9 +14,10 @@ import tempfile
 PRIVATE_NAMES = frozenset(("gremlin_settings.json", "gremlin_icon_backup.json", "gremlin_memory.json",
                            "gremlin_log.txt", "gremlin.ico"))
 MODULES = frozenset(("gremlin_performance", "gremlin_profiles", "gremlin_arsenal", "gremlin_motion",
-                     "gremlin_social", "gremlin_linux", "gremlin_x11", "gremlin_x11_overlay"))
+                     "gremlin_social", "gremlin_linux", "gremlin_x11", "gremlin_x11_overlay",
+                     "gremlin_physics", "gremlin_ragdoll"))
 SMOKE_CHECKS = frozenset(("single_instance", "bundled_imports", "owned_withdrawn_tk", "simulation_and_canvas",
-                          "expansion_engines", "settings_roundtrip", "memory_roundtrip", "hide_cleanup",
+                          "expansion_engines", "physics_engines", "settings_roundtrip", "memory_roundtrip", "hide_cleanup",
                           "emergency_exit_dispatch", "window_tracking_and_restore"))
 DESKTOP_CHECKS = frozenset(("transparent_passthrough", "opaque_interaction", "outside_drag_release", "emergency_exit"))
 X11_LIBRARIES = ("libX11.so.6", "libXext.so.6", "libXtst.so.6", "libXrandr.so.2", "libXss.so.1")

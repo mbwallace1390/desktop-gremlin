@@ -6,6 +6,8 @@ windows, native input or focus. Priority states always supersede traversal.
 import math
 import random
 
+from gremlin_physics import material, preset, segment_contact
+
 
 FREE = frozenset(("idle", "walk", "taunt", "fall", "jump", "wallslide"))
 KINDS = ("crate", "seesaw", "ramp", "fan", "conveyor")
@@ -81,6 +83,7 @@ class MotionEngine:
         action = {"kind": kind, "t": 0.0, "face": f.face, "duration": 1.5}
         K, S = f.K(), f.sc
         if kind == "rope":
+            anchor_window = None
             if target is None:
                 ledges = [p for p in self.app.terrain.platforms
                           if p[2] < f.y - 90 * S and abs((p[0] + p[1]) / 2 - f.x) < 320 * S]
@@ -88,9 +91,18 @@ class MotionEngine:
                     return False
                 p = min(ledges, key=lambda p: abs((p[0] + p[1]) / 2 - f.x))
                 target = ((p[0] + p[1]) / 2, p[2])
+                if p[3] == "window":
+                    anchor_window = p[4]
             if not isinstance(target, (tuple, list)) or len(target) < 2:
                 return False
             ax, ay = target[:2]
+            if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (ax, ay)):
+                return False
+            if anchor_window is None:
+                for hwnd, rect in self.app.terrain.win_rect.items():
+                    if rect[0] <= ax <= rect[2] and abs(ay - rect[1]) < 6:
+                        anchor_window = hwnd
+                        break
             hand_y = f.y - 62 * S
             dx, dy = f.x - ax, hand_y - ay
             length = math.hypot(dx, dy)
@@ -102,7 +114,11 @@ class MotionEngine:
             if abs(omega) < .18:
                 omega = f.face * .45
             action.update(anchor=(ax, ay), length=length, angle=angle,
-                          omega=omega, duration=2.2)
+                          omega=omega, duration=2.2, hwnd=anchor_window,
+                          anchor_velocity=(0.0, 0.0))
+            if anchor_window is not None:
+                rect = self.app.terrain.win_rect[anchor_window]
+                action["local_anchor"] = (ax - rect[0], ay - rect[1])
             f.on_ground, f.plat = False, None
             # A prior landing squash would move the displayed grip off the
             # fixed-length rope, so the suspended body starts uncompressed.
@@ -240,16 +256,29 @@ class MotionEngine:
         self._serial += 1
         prop = {"id": self._serial, "kind": kind, "x": x, "y": y,
                 "w": width, "h": height, "life": 55.0, "angle": 0.0,
-                "phase": 0.0, "cooldown": 0.0, "occupants": set(), "direction": 1}
+                "phase": 0.0, "cooldown": 0.0, "occupants": set(), "direction": 1,
+                "vx": 0.0, "vy": 0.0, "omega": 0.0, "mass": 3.0,
+                "sleeping": False, "rest": 0.0, "support": None,
+                "material": self.cfg.get("surface_material", "standard")}
         self.props.append(prop)
         return prop
 
     def _height(self, prop, x):
+        if prop["kind"] == "crate":
+            vertices = self._vertices(prop)
+            crossings = []
+            for a, b in zip(vertices, vertices[1:] + vertices[:1]):
+                if min(a[0], b[0]) - .001 <= x <= max(a[0], b[0]) + .001:
+                    if abs(b[0] - a[0]) < .001:
+                        crossings.append(min(a[1], b[1]))
+                    else:
+                        crossings.append(a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]))
+            return min(crossings) if crossings else min(y for _x, y in vertices)
         u = clamp((x - prop["x"]) / prop["w"] + .5, 0, 1)
         if prop["kind"] == "ramp":
             return prop["y"] - u * prop["h"]
         if prop["kind"] == "seesaw":
-            return prop["y"] - prop["h"] + (x - prop["x"]) * prop["angle"]
+            return prop["y"] - prop["h"] + (x - prop["x"]) * math.tan(prop["angle"])
         return prop["y"] - prop["h"]
 
     def platforms(self):
@@ -259,12 +288,276 @@ class MotionEngine:
         for prop in self.props:
             if prop["kind"] == "fan":
                 continue
-            left, width = prop["x"] - prop["w"] / 2, prop["w"]
-            count = 10 if prop["kind"] in ("ramp", "seesaw") else 1
+            left, _top, right, _bottom = self._bounds(prop)
+            width = right - left
+            count = 10 if prop["kind"] in ("crate", "ramp", "seesaw") else 1
             for i in range(count):
                 x0, x1 = left + width * i / count, left + width * (i + 1) / count
                 result.append((x0, x1, self._height(prop, (x0 + x1) / 2), "toy", prop["id"]))
         return result
+
+    def _vertices(self, prop):
+        """Drawing and swept collisions use the same rigid crate corners."""
+        cx, cy = prop["x"], prop["y"] - prop["h"] / 2
+        c, s = math.cos(prop["angle"]), math.sin(prop["angle"])
+        w, h = prop["w"] / 2, prop["h"] / 2
+        return [(cx + dx * c - dy * s, cy + dx * s + dy * c)
+                for dx, dy in ((-w, -h), (w, -h), (w, h), (-w, h))]
+
+    def _bounds(self, prop):
+        if prop["kind"] == "crate":
+            corners = self._vertices(prop)
+            return (min(x for x, _y in corners), min(y for _x, y in corners),
+                    max(x for x, _y in corners), max(y for _x, y in corners))
+        left, right = prop["x"] - prop["w"] / 2, prop["x"] + prop["w"] / 2
+        return left, min(self._height(prop, left), self._height(prop, right)), right, prop["y"]
+
+    def _polygon_contact(self, x0, y0, x1, y1, vertices, radius):
+        """Clip a swept point against a convex polygon's outward half planes."""
+        enter, leave, nx, ny = 0.0, 1.0, 0.0, 0.0
+        dx, dy = x1 - x0, y1 - y0
+        nearest_face = (-float("inf"), 0.0, 0.0)
+        for a, b in zip(vertices, vertices[1:] + vertices[:1]):
+            ex, ey = b[0] - a[0], b[1] - a[1]
+            length = max(.001, math.hypot(ex, ey))
+            ox, oy = ey / length, -ex / length
+            distance = (x0 - a[0]) * ox + (y0 - a[1]) * oy - radius
+            if distance > nearest_face[0]:
+                nearest_face = distance, ox, oy
+            speed = dx * ox + dy * oy
+            if abs(speed) < 1e-9:
+                if distance > 0:
+                    return None
+                continue
+            t = -distance / speed
+            if speed < 0:
+                if t >= enter:
+                    enter, nx, ny = t, ox, oy
+            else:
+                leave = min(leave, t)
+            if enter > leave:
+                return None
+        if 0 <= enter <= 1 and leave >= 0:
+            if nearest_face[0] <= 1e-7:
+                # Separation from a just-hit face is not another ricochet.
+                _distance, nx, ny = nearest_face
+                return (0.0, nx, ny) if dx * nx + dy * ny < 0 else None
+            if nx == ny == 0:
+                length = max(.001, math.hypot(dx, dy))
+                nx, ny = -dx / length, -dy / length
+            return enter, nx, ny
+        return None
+
+    def projectile_contact(self, x0, y0, x1, y1, radius=0):
+        if not self.cfg.get("toy_props", True):
+            return None
+        nearest = None
+        for prop in self.props:
+            left, top, right, bottom = self._bounds(prop)
+            if prop["kind"] == "crate":
+                vertices = self._vertices(prop)
+            elif prop["kind"] == "ramp":
+                vertices = [(left, bottom), (right, top), (right, bottom)]
+            elif prop["kind"] == "seesaw":
+                # The thin beam is the contact surface, not its empty bounding box.
+                ly, ry = self._height(prop, left), self._height(prop, right)
+                vertices = [(left, ly - 2.5), (right, ry - 2.5),
+                            (right, ry + 2.5), (left, ly + 2.5)]
+            else:
+                vertices = [(left, top), (right, top), (right, bottom), (left, bottom)]
+            hit = self._polygon_contact(x0, y0, x1, y1, vertices, max(0, radius))
+            if hit is not None and (nearest is None or hit[0] < nearest[0]):
+                nearest = hit + (prop,)
+        return nearest
+
+    def hit_prop(self, prop, x, y, vx, vy, strength=1.0):
+        if prop not in self.props or not all(math.isfinite(v) for v in (x, y, vx, vy, strength)):
+            return
+        power = clamp(strength, 0, 8) * preset(self.cfg.get("physics_preset", "normal"))["impulse"]
+        jx, jy = clamp(vx, -4000, 4000) * .32 * power, clamp(vy, -4000, 4000) * .32 * power
+        mass = prop["mass"]
+        inertia = mass * (prop["w"] ** 2 + prop["h"] ** 2) / 12
+        # The cross product converts an off-center impulse into angular momentum.
+        torque = (x - prop["x"]) * jy - (y - prop["y"] + prop["h"] / 2) * jx
+        if prop["kind"] == "crate":
+            prop["vx"] = clamp(prop["vx"] + jx / mass, -900, 900)
+            prop["vy"] = clamp(prop["vy"] + jy / mass, -900, 900)
+            prop["omega"] = clamp(prop["omega"] + torque / max(1, inertia), -10, 10)
+            prop["sleeping"], prop["rest"] = False, 0.0
+        elif prop["kind"] == "seesaw":
+            prop["omega"] = clamp(prop["omega"] + torque / max(1, inertia), -9, 9)
+
+    def blast(self, x, y, radius, strength):
+        if radius <= 0:
+            return
+        for prop in self.props:
+            dx, dy = prop["x"] - x, prop["y"] - prop["h"] / 2 - y
+            distance = math.hypot(dx, dy)
+            if distance < radius:
+                # Negative radial strength is attraction; only explosions lift.
+                force = strength * (1 - distance / radius)
+                self.hit_prop(prop, x, y, dx / max(1, distance) * force,
+                              dy / max(1, distance) * force - max(0, force) * .65, 2.0)
+
+    def surface_velocity(self, f):
+        if f.plat and f.plat[0] == "toy":
+            for prop in self.props:
+                if prop["id"] == f.plat[1]:
+                    return prop["direction"] * 90 * f.K() if prop["kind"] == "conveyor" else 0.0
+        return 0.0
+
+    def _support(self, prop, previous_bottom):
+        left, _top, right, bottom = self._bounds(prop)
+        floor = self.app.ground_at(prop["x"], previous_bottom)
+        best = (floor, ("floor", None), 0.0) if bottom >= floor - .5 else None
+        surfaces = [(a, b, y, (kind, key), 0.0)
+                    for a, b, y, kind, key in self.app.terrain.platforms]
+        for other in self.props:
+            if other is prop or other["kind"] == "fan":
+                continue
+            a, _t, b, _d = self._bounds(other)
+            sample = clamp(prop["x"], a + .01, b - .01)
+            surfaces.append((a, b, self._height(other, sample),
+                             ("toy", other["id"]), other["vx"]))
+        for a, b, y, key, speed in surfaces:
+            if (a <= prop["x"] <= b and min(right, b) - max(left, a) > 5 and bottom >= y - .5
+                    and previous_bottom <= y + 4
+                    and (best is None or y < best[0])):
+                best = y, key, speed
+        return best
+
+    def _crate_step(self, prop, dt):
+        K = self.cfg.get("scale", 1.0) / 1.75
+        old_x, old_y = prop["x"], prop["y"]
+        before = self._bounds(prop)
+        support = self._support(prop, before[3])
+        if prop["sleeping"]:
+            if support is not None and abs(before[3] - support[0]) < 1:
+                return
+            # A removed or displaced support must wake a previously stable stack.
+            prop["sleeping"], prop["rest"] = False, 0.0
+        response = material(prop["material"])
+        bounce = max(response["restitution"], .7 if self.cfg.get("physics_preset") == "bouncy" else 0)
+        gravity = 1900 * K * preset(self.cfg.get("physics_preset", "normal"))["gravity"]
+        prop["vy"] += gravity * dt
+        for fan in self.props:
+            if (fan["kind"] == "fan" and abs(prop["x"] - fan["x"]) < fan["w"] / 2
+                    and fan["y"] - 185 * self.cfg.get("scale", 1.0) < prop["y"] < fan["y"]):
+                prop["vy"] -= gravity * 1.8 * dt
+        prop["vy"] = clamp(prop["vy"], -1000, 1200)
+        prop["x"] += prop["vx"] * dt
+        prop["y"] += prop["vy"] * dt
+        prop["angle"] = (prop["angle"] + prop["omega"] * dt + math.pi) % (2 * math.pi) - math.pi
+        bounds = self._bounds(prop)
+        # Window sides are swept using the crate's conservative rotated extent.
+        ex, ey = (bounds[2] - bounds[0]) / 2, (bounds[3] - bounds[1]) / 2
+        for _name, left, top, right, bottom, _key in self.app.terrain.windows:
+            hit = segment_contact(old_x, old_y - prop["h"] / 2,
+                                  prop["x"], prop["y"] - prop["h"] / 2,
+                                  left - ex, top - ey, right + ex, bottom + ey)
+            if hit is not None and hit[1] and not (left - ex < old_x < right + ex
+                    and top - ey < old_y - prop["h"] / 2 < bottom + ey):
+                prop["x"] = old_x + (prop["x"] - old_x) * hit[0] + hit[1] * .1
+                prop["vx"] *= -bounce
+        support = self._support(prop, before[3])
+        previous_support, prop["support"] = prop["support"], None
+        if support is not None and prop["vy"] >= 0:
+            level, key, belt = support
+            prop["y"] -= self._bounds(prop)[3] - level
+            prop["support"] = key
+            if key[0] == "toy":
+                base = next((p for p in self.props if p["id"] == key[1]), None)
+                if base is not None and base["kind"] == "conveyor":
+                    belt = base["direction"] * 90 * K
+                elif base is not None and base["kind"] == "seesaw" and previous_support != key:
+                    inertia = base["mass"] * base["w"] ** 2 / 12
+                    base["omega"] += prop["mass"] * prop["vy"] * (prop["x"] - base["x"]) / inertia
+            # Tiny contact velocities settle, while energetic impacts rebound.
+            prop["vy"] = -prop["vy"] * bounce if prop["vy"] > 90 * K else 0.0
+            drag = 260 * K * response["friction"] * dt
+            prop["vx"] += clamp(belt - prop["vx"], -drag, drag)
+            # Contact torque lets a tilted box fall onto its nearest broad face.
+            error = (prop["angle"] + math.pi / 2) % math.pi - math.pi / 2
+            prop["omega"] -= error * 22 * dt
+            prop["omega"] *= math.exp(-7 * max(.25, response["friction"]) * dt)
+            if abs(error) < .035 and abs(prop["omega"]) < .2:
+                prop["angle"] -= error
+                prop["omega"] = 0.0
+                prop["y"] -= self._bounds(prop)[3] - level
+            if abs(prop["vx"]) < .8 and abs(prop["vy"]) < 1 and abs(prop["omega"]) < .02:
+                prop["rest"] += dt
+                if prop["rest"] > .6:
+                    prop["sleeping"], prop["vx"], prop["vy"] = True, 0.0, 0.0
+            else:
+                prop["rest"] = 0.0
+        else:
+            prop["rest"] = 0.0
+        mon, work = self.app.monitor_at(prop["x"], prop["y"])
+        bounds = self._bounds(prop)
+        if bounds[0] < mon[0] or bounds[2] > mon[2]:
+            prop["x"] += mon[0] - bounds[0] if bounds[0] < mon[0] else mon[2] - bounds[2]
+            prop["vx"] *= -bounce
+        # Carry only existing physical riders; priority activities remain owners.
+        for actor in prop["occupants"]:
+            if self._free(actor) and actor.plat == ("toy", prop["id"]):
+                actor.x += prop["x"] - old_x
+                actor.y = self._height(prop, actor.x)
+
+    def _crate_pairs(self):
+        crates = [p for p in self.props if p["kind"] == "crate"]
+        for i, first in enumerate(crates):
+            for second in crates[i + 1:]:
+                a, b = self._bounds(first), self._bounds(second)
+                ox, oy = min(a[2], b[2]) - max(a[0], b[0]), min(a[3], b[3]) - max(a[1], b[1])
+                if ox <= 0 or oy <= .5:
+                    continue
+                upper, lower = (first, second) if a[1] < b[1] else (second, first)
+                lower_bounds = b if upper is first else a
+                unstable = not lower_bounds[0] <= upper["x"] <= lower_bounds[2]
+                if ox < oy or unstable:
+                    sign = -1 if first["x"] < second["x"] else 1
+                    first["x"] += sign * (ox / 2 + .01)
+                    second["x"] -= sign * (ox / 2 + .01)
+                    relative = (first["vx"] - second["vx"]) * sign
+                    if relative < 0:
+                        bounce = min(material(p["material"])["restitution"] for p in (first, second))
+                        impulse = -(1 + bounce) * relative / 2
+                        first["vx"] += impulse * sign
+                        second["vx"] -= impulse * sign
+                    for p in (first, second):
+                        p["sleeping"], p["rest"] = False, 0.0
+                else:
+                    upper["y"] -= oy
+                    upper["vy"] = min(upper["vy"], lower["vy"])
+
+    def _seesaw_step(self, prop, occupants, dt):
+        inertia = prop["mass"] * prop["w"] ** 2 / 12
+        gravity = 1900 / 1.75 * self.cfg.get("scale", 1.0) * preset(self.cfg.get("physics_preset", "normal"))["gravity"]
+        for actor in occupants:
+            lever = actor.x - prop["x"]
+            weight = clamp(getattr(actor, "physics_mass", actor.sc ** 2), .35, 8)
+            prop["omega"] += weight * gravity * lever / inertia * dt
+            if actor not in prop["occupants"]:
+                speed = max(0, getattr(actor, "physics_impact_vy", 0), getattr(actor, "motion_last_vy", 0))
+                prop["omega"] += weight * min(speed, 1500) * lever / inertia
+                actor.physics_impact_vy = actor.motion_last_vy = 0.0
+        for other in self.props:
+            if other["kind"] == "crate" and other["support"] == ("toy", prop["id"]):
+                prop["omega"] += other["mass"] * gravity * (other["x"] - prop["x"]) / inertia * dt
+        prop["omega"] = clamp((prop["omega"] - prop["angle"] * 5 * dt) * math.exp(-1.3 * dt), -9, 9)
+        prop["angle"] += prop["omega"] * dt
+        limit = math.atan2(prop["h"] - 2, prop["w"] / 2)
+        if abs(prop["angle"]) > limit:
+            prop["angle"] = clamp(prop["angle"], -limit, limit)
+            prop["omega"] *= -.12
+        for actor in occupants:
+            # The derivative of beam height is the launch velocity at this lever.
+            surface_vy = (actor.x - prop["x"]) * prop["omega"] / math.cos(prop["angle"]) ** 2
+            actor.y = self._height(prop, actor.x)
+            if surface_vy < -60 * actor.K():
+                actor.y -= 1
+                actor.vy, actor.on_ground, actor.plat = surface_vy, False, None
+                actor.set_state("jump")
 
     def update(self, dt):
         for f in list(self.cooldowns):
@@ -284,25 +577,21 @@ class MotionEngine:
                 continue
             prop["phase"] = (prop["phase"] + dt * 5) % (math.pi * 2)
             prop["cooldown"] = max(0, prop["cooldown"] - dt)
+            prop["material"] = self.cfg.get("surface_material", "standard")
             occupants = {f for f in self.app.fighters if self._free(f)
                          and f.on_ground and abs(f.x - prop["x"]) < prop["w"] / 2 + 5
                          and abs(f.y - self._height(prop, f.x)) < 12 * f.sc}
             if prop["kind"] == "seesaw":
-                newcomers = occupants - prop["occupants"]
-                if newcomers and prop["cooldown"] <= 0:
-                    landed = max(newcomers, key=lambda f: abs(f.x - prop["x"]))
-                    side = -1 if landed.x < prop["x"] else 1
-                    riders = [rider for rider in occupants
-                              if (rider.x - prop["x"]) * side < -8 * rider.sc]
-                    for rider in riders:
-                        rider.vy, rider.on_ground, rider.plat = -650 * rider.K(), False, None
-                        rider.set_state("jump")
-                    prop["angle"] = -side * .23
-                    if riders:
-                        prop["cooldown"] = .85
-                else:
-                    prop["angle"] *= max(0, 1 - dt * 2)
+                self._seesaw_step(prop, occupants, min(dt, .12))
             prop["occupants"] = occupants
+        # A fixed upper bound prevents a delayed render from multiplying work.
+        steps = max(1, min(8, int(math.ceil(max(0, dt) / (1 / 120)))))
+        step = min(max(0, dt), .12) / steps
+        for _ in range(steps):
+            for prop in sorted(self.props, key=lambda p: p["y"], reverse=True):
+                if prop["kind"] == "crate":
+                    self._crate_step(prop, step)
+            self._crate_pairs()
         if expired:
             for f in self.app.fighters:
                 if f.plat and f.plat[0] == "toy" and f.plat[1] in expired:
@@ -329,13 +618,15 @@ class MotionEngine:
                 continue
             top = self._height(prop, f.x)
             if prop["kind"] == "fan" and prop["y"] - 185 * f.sc < f.y <= prop["y"] + 2:
-                f.vy = min(f.vy, -175 * f.K())
+                gravity = 1900 * f.K() * preset(self.cfg.get("physics_preset", "normal"))["gravity"]
+                f.vy -= gravity * 1.8 * dt
                 f.on_ground, f.plat = False, None
                 if f.state in ("idle", "walk", "taunt"):
                     f.set_state("jump")
             elif prop["kind"] == "conveyor" and f.on_ground and abs(f.y - top) < 12 * f.sc:
-                f.x += prop["direction"] * 90 * f.K() * dt
-            elif prop["kind"] in ("ramp", "seesaw") and f.on_ground and abs(f.y - top) < 15 * f.sc:
+                traction = 900 * f.K() * material(prop["material"])["friction"] * dt
+                f.vx += clamp(prop["direction"] * 90 * f.K() - f.vx, -traction, traction)
+            elif prop["kind"] in ("crate", "ramp", "seesaw") and f.on_ground and abs(f.y - top) < 15 * f.sc:
                 # Match the exact next segment (including physics' 6px foot
                 # tolerance), so an uphill step cannot create a false fall.
                 next_x = f.x + f.vx * dt
@@ -344,6 +635,14 @@ class MotionEngine:
                 if supports:
                     f.y, f.vy = min(supports), 0.0
                     f.plat = ("toy", prop["id"])
+            elif prop["kind"] == "crate" and top + 4 < f.y < prop["y"] + 50 * f.sc:
+                left, _top, right, _bottom = self._bounds(prop)
+                side = -1 if f.x < prop["x"] else 1
+                if f.vx * side < 0:
+                    # Walking bodies push with a per-step impulse, never teleport the box.
+                    self.hit_prop(prop, f.x, f.y - 25 * f.sc, f.vx, 0, dt * 8)
+                    f.x = (left - 5 * f.sc) if side < 0 else (right + 5 * f.sc)
+                    f.vx = prop["vx"]
 
     def control(self, f, dt):
         action = self.actions.get(f)
@@ -370,20 +669,57 @@ class MotionEngine:
         action["t"] += dt
         t = action["t"]
         if kind == "rope":
-            # Semi-implicit pendulum integration conserves the rope radius and
-            # transfers its tangent velocity unchanged when the hand lets go.
-            angle, omega, length = action["angle"], action["omega"], action["length"]
-            omega += (-1900 * K / length * math.sin(angle) - .045 * omega) * dt
-            angle += omega * dt
-            action["angle"], action["omega"] = angle, omega
+            if dt <= 0:
+                return True
+            old_anchor = action["anchor"]
+            hwnd = action.get("hwnd")
+            if hwnd is not None:
+                rect = self.app.terrain.win_rect.get(hwnd)
+                if rect is None:
+                    self._finish(f)
+                    return True
+                local = action["local_anchor"]
+                action["anchor"] = rect[0] + local[0], rect[1] + local[1]
             ax, ay = action["anchor"]
-            f.x, f.y = ax + length * math.sin(angle), ay + length * math.cos(angle) + 62 * S
-            f.vx, f.vy = length * math.cos(angle) * omega, -length * math.sin(angle) * omega
-            f.face = 1 if f.vx >= 0 else -1
-            if f.y >= self.app.ground_at(f.x, f.y) - 5:
+            if math.hypot(ax - old_anchor[0], ay - old_anchor[1]) > max(80 * S, action["length"] * .75):
+                # A maximize/monitor jump cannot drag the body through an entire
+                # desktop in one sample; let go with the last valid momentum.
                 self._finish(f)
-                self.app.physics(f, dt, self.app.ground_at(f.x, f.y))
-            elif (t > .65 and angle * omega > 0 and abs(angle) > .30) or t >= action["duration"]:
+                return True
+            avx, avy = (ax - old_anchor[0]) / dt, (ay - old_anchor[1]) / dt
+            last_vx, last_vy = action["anchor_velocity"]
+            angle, omega, length = action["angle"], action["omega"], action["length"]
+            # Anchor acceleration contributes an opposite tangential impulse in
+            # the moving reference frame. World release adds anchor velocity.
+            omega -= ((avx - last_vx) * math.cos(angle)
+                      - (avy - last_vy) * math.sin(angle)) / length
+            action["anchor_velocity"] = avx, avy
+            steps = max(1, min(8, int(math.ceil(dt / (1 / 120)))))
+            step = min(dt, .12) / steps
+            gravity = 1900 * K * preset(self.cfg.get("physics_preset", "normal"))["gravity"]
+            for index in range(steps):
+                omega += (-gravity / length * math.sin(angle) - .045 * omega) * step
+                angle += omega * step
+                u = (index + 1) / steps
+                anchor_x, anchor_y = old_anchor[0] + (ax - old_anchor[0]) * u, old_anchor[1] + (ay - old_anchor[1]) * u
+                next_x = anchor_x + length * math.sin(angle)
+                next_y = anchor_y + length * math.cos(angle) + 62 * S
+                hit = self._rope_contact(f, next_x, next_y, hwnd)
+                f.vx = avx + length * math.cos(angle) * omega
+                f.vy = avy - length * math.sin(angle) * omega
+                if hit is not None:
+                    fraction, nx, ny = hit
+                    f.x += (next_x - f.x) * fraction + nx * .2
+                    f.y += (next_y - f.y) * fraction + ny * .2
+                    inward = min(0, f.vx * nx + f.vy * ny)
+                    f.vx -= inward * nx
+                    f.vy -= inward * ny
+                    self._finish(f)
+                    return True
+                f.x, f.y = next_x, next_y
+            action["angle"], action["omega"] = angle, omega
+            f.face = 1 if f.vx >= 0 else -1
+            if (t > .65 and angle * omega > 0 and abs(angle) > .30) or t >= action["duration"]:
                 self._finish(f)
             return True
         if kind == "vault":
@@ -445,6 +781,33 @@ class MotionEngine:
             f.set_state("parkour")
         return True
 
+    def _rope_contact(self, f, next_x, next_y, anchor_window):
+        nearest = None
+        obstacles = [(rect, True) for rect in self.app.terrain.windows]
+        obstacles += [(rect, False) for rect in self.app.terrain.icons]
+        for (_name, left, top, right, bottom, key), is_window in obstacles:
+            for height in (4, 32, 60):
+                x0, y0, x1, y1 = f.x, f.y - height * f.sc, next_x, next_y - height * f.sc
+                radius = 9 * f.sc
+                if (is_window and key == anchor_window and left - radius < x0 < right + radius
+                        and top - radius < y0 < bottom + radius):
+                    continue
+                hit = segment_contact(x0, y0, x1, y1, left - radius, top - radius,
+                                      right + radius, bottom + radius)
+                if hit is not None and (nearest is None or hit[0] < nearest[0]):
+                    nearest = hit
+        for height in (4, 32, 60):
+            hit = self.projectile_contact(f.x, f.y - height * f.sc,
+                                          next_x, next_y - height * f.sc, 9 * f.sc)
+            if hit is not None and (nearest is None or hit[0] < nearest[0]):
+                nearest = hit[:3]
+        floor = self.app.ground_at(next_x, f.y)
+        if next_y >= floor and next_y > f.y:
+            hit = (clamp((floor - f.y) / (next_y - f.y), 0, 1), 0.0, -1.0)
+            if nearest is None or hit[0] < nearest[0]:
+                nearest = hit
+        return nearest
+
     def pose(self, f):
         action = self.actions.get(f)
         if action is None or f.state != "parkour":
@@ -472,9 +835,13 @@ class MotionEngine:
             left, right, top = x - w / 2, x + w / 2, y - h
             kind = prop["kind"]
             if kind == "crate":
-                app.box(left, top, right, y, "#554B42", WOOD, 2)
-                app.line((left + 4, top + 4, right - 4, y - 4), WOOD, 2)
-                app.line((left + 4, y - 4, right - 4, top + 4), WOOD, 2)
+                corners = self._vertices(prop)
+                if abs(prop["angle"]) < .001:
+                    app.box(left, top, right, y, "#554B42", WOOD, 2)
+                else:
+                    app.line(tuple(v for point in corners + corners[:1] for v in point), WOOD, 2)
+                app.line(corners[0] + corners[2], WOOD, 2)
+                app.line(corners[1] + corners[3], WOOD, 2)
             elif kind == "seesaw":
                 app.line((x - h, y, x, top, x + h, y), INK, 3)
                 app.line((left, self._height(prop, left), right, self._height(prop, right)), WOOD, 5)

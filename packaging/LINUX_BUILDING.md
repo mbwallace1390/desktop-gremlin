@@ -41,10 +41,13 @@ The script installs the exact build dependencies in requirements-build-linux.txt
 runs the Linux test selection and source self-test, builds DesktopGremlinLinux.spec,
 and launches the frozen self-test from an unrelated temporary working directory.
 The frozen gate removes Python from PATH and isolates HOME/XDG user files. It
-requires all ten app checks, including actual window movement and restoration,
+requires all eleven app checks, including physics impulses, passive limb motion,
+crate translation/rotation, actual window movement and restoration,
 plus four X11 input checks: transparent pass-through,
 opaque interaction, drag release outside the overlay and the emergency exit.
 No package is created when any required check fails.
+`gremlin_physics` and `gremlin_ragdoll` must load from the frozen bundle. The
+isolated Settings window must save and reload both physics choices as well.
 
 The spec explicitly collects ctypes-loaded X11/Xext/XTest/XRandR/XScreenSaver
 libraries and their transitive dependencies. It excludes the Windows renderer
@@ -78,11 +81,11 @@ GitHub's [artifact upload/download actions](https://docs.github.com/en/actions/t
 transfer the two build results into the draft-release job.
 
 After reviewing the source and approving its publication, commit and push it,
-then create and push its matching version tag. For version 3.1.0:
+then create and push its matching version tag. For version 3.2.0:
 
 ```sh
-git tag v3.1.0
-git push origin v3.1.0
+git tag v3.2.0
+git push origin v3.2.0
 ```
 
 Wait for **Build Windows and Linux downloads** to finish, then open the draft
@@ -91,8 +94,8 @@ Download both OS archives and inspect the retained self-test evidence. Check
 the Linux archive before extracting it:
 
 ```sh
-sha256sum --check DesktopGremlin-3.1.0-Linux-x64.sha256
-tar -xzf DesktopGremlin-3.1.0-Linux-x64.tar.gz
+sha256sum --check DesktopGremlin-3.2.0-Linux-x64.sha256
+tar -xzf DesktopGremlin-3.2.0-Linux-x64.tar.gz
 ```
 
 Check startup, settings, ordinary desktop click-through, dragging, window undo

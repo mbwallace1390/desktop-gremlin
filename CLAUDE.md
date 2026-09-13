@@ -24,7 +24,7 @@ Quit hides the overlay first and must finish teardown even if cleanup fails.
 python tests\run_all.py
 ```
 
-41 checks on Windows; `tests/run_all.py` selects the shared and Linux subset
+46 checks on Windows; `tests/run_all.py` selects the shared and Linux subset
 on Linux. Linux tests require isolated Xvfb and `GREMLIN_ISOLATED_X11=1`.
 Production never synthesizes input. `gremlin_x11_probe.py` is an opt-in source
 and frozen acceptance helper that uses a separate receiver process and proves
@@ -32,6 +32,15 @@ mouse delivery, dragging/release and the global emergency shortcut.
 
 The expansion engines are `gremlin_arsenal.py`, `gremlin_motion.py`, and
 `gremlin_social.py`; `gremlin_profiles.py` validates cast/customization.
+`gremlin_physics.py` supplies deterministic impulses, contact response and
+cursor sampling; `gremlin_ragdoll.py` supplies four constrained passive limbs
+around the authored root during grabs, throws and knockouts. Preserve exact
+authored weapon and ledge-grip poses outside those states. Crates translate
+and rotate, using conservative boxes for terrain/stack contact and their drawn
+polygon for projectiles. Seesaws have anchored pivots; other toys stay anchored.
+`physics_preset` accepts normal/moon/bouncy/heavy; `surface_material` accepts
+standard/ice/rubber/sticky. Defaults are normal/standard. Both must survive
+SettingsWindow.apply and loading; neither can enable native presentation.
 Focused legacy harness fixtures disable autonomous expansion scenes and toys;
 `test_expansion_mixed.py` enables all production flags and tests all three modes,
 multiple scales and crowds, interrupted ownership, caps, and finite coordinates.
@@ -47,6 +56,10 @@ Use `packaging/LINUX_BUILDING.md` for native build/test commands; the unified
 `release-downloads.yml` prepares a draft only when both OS builds pass.
 The EXE's `--self-test <absolute report.json>` enters `gremlin_selftest.py`
 before `main()`, replaces desktop I/O and uses hidden owned Tk windows.
+Both platform self-tests require `physics_engines`: a real impulse, passive
+limb motion and a translating/rotating crate after the original expansion draw
+checks. Their isolated Settings window saves and reloads both physics choices.
+Packaging must require this check and bundled origins for both physics modules.
 Never test an unknown CLI switch by launching the normal overlay. Verify the
 diagnostic entry exists before invoking it. The release gate strips Python
 from PATH and verifies all module origins are inside the frozen bundle.

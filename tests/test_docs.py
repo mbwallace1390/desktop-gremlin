@@ -13,6 +13,7 @@ import sys
 
 _TESTS = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(_TESTS)
+sys.path.insert(0, ROOT)
 SRC = os.environ.get("GREMLIN_SRC", os.path.join(ROOT, "desktop_gremlin.py"))
 HERE = os.path.join(_TESTS, ".tmp")
 os.makedirs(HERE, exist_ok=True)
@@ -32,7 +33,7 @@ app_src = io.open(SRC, encoding="utf-8").read()
 bad = []
 
 # --- the settings table must list exactly the real keys, with real defaults --
-rows = dict(re.findall(r"^\| `([a-z_]+)` \| `([^`]+)` \|", readme, re.M))
+rows = dict(re.findall(r"^\| `([a-z_]+)` \| `([^`]*)` \|", readme, re.M))
 missing = sorted(set(gm.DEFAULTS) - set(rows))
 extra = sorted(set(rows) - set(gm.DEFAULTS))
 if missing:
@@ -49,7 +50,7 @@ for key, shown in rows.items():
                    % (key, shown, want))
 
 # --- every file the code writes should be described ------------------------
-for const in ("SETTINGS_PATH", "BACKUP_PATH", "MEMORY_PATH", "LOG_PATH"):
+for const in ("SETTINGS_PATH", "BACKUP_PATH", "MEMORY_PATH", "LOG_PATH", "ICON_PATH"):
     name = os.path.basename(getattr(gm, const))
     if name not in readme:
         bad.append("README never mentions %s (%s)" % (name, const))
@@ -102,7 +103,7 @@ for phrase, why in (
         bad.append("README still claims %r (%s)" % (phrase, why))
 
 print("settings keys   : %d documented, %d real" % (len(rows), len(gm.DEFAULTS)))
-print("files described : %d" % 4)
+print("files described : %d" % 5)
 print("tray items      : %d" % len(labels))
 print("cast named      : %d of %d" % (
     sum(1 for n in gm.ROSTER if n.lower() in squashed), len(gm.ROSTER)))

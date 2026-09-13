@@ -86,6 +86,7 @@ def fire(w, face, dx, dy, squash=0.0, tumble=0.0):
     f.target = {"kind": "icon", "key": 0, "cx": cx, "cy": cy, "top": cy - 32,
                 "name": "x", "w": 64, "h": 64}
     f.plan = w
+    f.per = dict(f.per, weapons=tuple(gm.WEAPONS))
     f.snatch = False
     f.hits = 0                # a third lightning hit wrecks the target and idles him
     app.start_attack(f)
@@ -94,13 +95,29 @@ def fire(w, face, dx, dy, squash=0.0, tumble=0.0):
     # to the frame before the release; _st_attack advances atk by dt first
     f.atk = (.30 if w == "minigun" else gm.RELEASE_AT.get(w, .55)) * f.atk_dur
     app.shots.clear()
+    if hasattr(app, "arsenal"):
+        app.arsenal.shots.clear()
     app.bolts.clear()
-    app.update_fighter(f, DT)
+    released_tip = []
+    original_release = app.release_attack
+
+    def observe_release(fighter):
+        original_release(fighter)
+        # Read the actual weapon at emission, before recoil moves the body.
+        # The glove visibly launches him backwards within this same frame.
+        released_tip.append(drawn_tip(w, fighter.aim))
+
+    app.release_attack = observe_release
+    try:
+        app.update_fighter(f, DT)
+    finally:
+        app.release_attack = original_release
     if w == "lightning":
         spawn = tuple(app.bolts[-1]["pts"][:2]) if app.bolts else None
     else:
-        spawn = (app.shots[-1]["x"], app.shots[-1]["y"]) if app.shots else None
-    return drawn_tip(w, f.aim), spawn, f.aim
+        rounds = app.shots or (app.arsenal.shots if hasattr(app, "arsenal") else [])
+        spawn = (rounds[-1]["x"], rounds[-1]["y"]) if rounds else None
+    return (released_tip[-1] if released_tip else drawn_tip(w, f.aim)), spawn, f.aim
 
 
 # An attack never tumbles (the tumble belongs to thrown and ko), but it can

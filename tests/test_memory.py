@@ -9,6 +9,7 @@ import os
 import sys
 
 _TESTS = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(_TESTS))
 SRC = os.environ.get(
     "GREMLIN_SRC",
     os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))
@@ -79,7 +80,7 @@ gm.save_memory()
 raw = io.open(STORE, encoding="utf-8").read()
 keys = set(json.loads(raw))
 print("keys on disk          : %s" % sorted(keys))
-if keys - {"version", "runs", "icons", "who"}:
+if keys - {"version", "runs", "icons", "who", "relationships"}:
     bad.append("unexpected keys persisted: %s" % sorted(keys))
 for word in ("YouTube", "Chrome", "title", "window", "foreground", "hour"):
     if word.lower() in raw.lower():

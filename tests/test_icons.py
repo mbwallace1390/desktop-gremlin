@@ -29,8 +29,11 @@ teardown = harness.teardown
 # --- 1. a blast pushes icons AWAY, and further the closer they were ---------
 gm, app, shell = build()
 before = dict(shell.pos)
+names_before = {entry[5]: entry[0] for entry in app.terrain.icons}
 cx, cy = 350.0, 332.0
 n = app.blast_icons(cx, cy, 300.0, 120.0)
+if {entry[5]: entry[0] for entry in app.terrain.icons} != names_before:
+    bad.append("a blast assigned other icons' names to moved icons")
 outward = 0
 for i, (x, y) in shell.pos.items():
     if before[i] == (x, y):

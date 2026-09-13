@@ -1,0 +1,118 @@
+name: Build Windows and Linux downloads
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-downloads-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.7"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+      - name: Test, bundle and smoke-test the Windows download
+        shell: pwsh
+        run: ./scripts/build_windows.ps1 -Python python
+      - name: Preserve Windows download and integrity files
+        uses: actions/upload-artifact@v4
+        with:
+          name: DesktopGremlin-download-Windows-x64
+          path: |
+            release/*-Windows-x64.zip
+            release/*-Windows-x64.sha256
+            release/*-Windows-x64.manifest.json
+          if-no-files-found: error
+      - name: Preserve Windows smoke-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DesktopGremlin-evidence-Windows
+          path: build/windows/packaged-self-test.json
+          if-no-files-found: ignore
+
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build tools and an isolated X11 desktop
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes python3.10-venv python3-tk xvfb xauth x11-utils openbox libx11-6 libxext6 libxtst6 libxrandr2 libxss1
+          /usr/bin/python3.10 -m venv .venv-linux
+      - name: Test actual X11 interaction, bundle and smoke-test Linux
+        env:
+          GREMLIN_ISOLATED_X11: "1"
+          XDG_SESSION_TYPE: x11
+        run: |
+          xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' bash -euo pipefail -c '
+            openbox > "$RUNNER_TEMP/gremlin-openbox.log" 2>&1 &
+            window_manager=$!
+            trap "kill $window_manager 2>/dev/null || true" EXIT
+            for attempt in {1..50}; do
+              if xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"; then break; fi
+              sleep 0.1
+            done
+            xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"
+            bash scripts/build_linux.sh
+          '
+      - name: Preserve Linux download and integrity files
+        uses: actions/upload-artifact@v4
+        with:
+          name: DesktopGremlin-download-Linux-x64
+          path: |
+            release/*-Linux-x64.tar.gz
+            release/*-Linux-x64.sha256
+            release/*-Linux-x64.manifest.json
+          if-no-files-found: error
+      - name: Preserve Linux smoke-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DesktopGremlin-evidence-Linux
+          path: |
+            build/linux/*self-test.json
+            ${{ runner.temp }}/gremlin-openbox.log
+          if-no-files-found: ignore
+
+  draft-release:
+    needs: [windows, linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: DesktopGremlin-download-*
+          path: release
+          merge-multiple: true
+      - name: Prepare one draft containing both downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft >/dev/null 2>&1; then
+            printf '%s\n' 'A release for this tag already exists; inspect it before replacing assets.' >&2
+            exit 1
+          fi
+          test -f "release/DesktopGremlin-${RELEASE_TAG#v}-Windows-x64.zip"
+          test -f "release/DesktopGremlin-${RELEASE_TAG#v}-Linux-x64.tar.gz"
+          gh release create "$RELEASE_TAG" --verify-tag --draft --title "Desktop Gremlin $RELEASE_TAG" --notes-file packaging/RELEASE_NOTES.md release/*

@@ -17,6 +17,7 @@ import sys
 from itertools import combinations
 
 _TESTS = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(_TESTS))
 SRC = os.environ.get(
     "GREMLIN_SRC",
     os.path.join(os.path.dirname(_TESTS), "desktop_gremlin.py"))

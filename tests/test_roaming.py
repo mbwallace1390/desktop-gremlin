@@ -42,7 +42,8 @@ for n in range(FRAMES):
     for i, f in enumerate(app.fighters):
         hist[i].append((f.x, f.y, f.state))
         states[i][f.state] = states[i].get(f.state, 0) + 1
-        out = not (app.ox <= f.x <= app.ox + app.W) or f.y < app.oy
+        out = (not (app.ox <= f.x <= app.ox + app.W)
+               or not (app.oy <= f.y <= app.oy + app.H))
         offscreen[i].append(out)
 
 WIN = 40 * 8

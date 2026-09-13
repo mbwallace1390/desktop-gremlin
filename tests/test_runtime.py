@@ -202,6 +202,7 @@ class SnapShell:
     def __init__(self):
         self.layout = []
         self.restored = None
+        self.restore_complete = False
 
     def snapshot(self):
         return [list(p) for p in self.layout]
@@ -209,6 +210,7 @@ class SnapShell:
     def restore(self, snap):
         self.restored = snap
         self.layout = [list(p) for p in snap]
+        self.restore_complete = True
         return len(snap)
 
 
@@ -255,17 +257,36 @@ if not gm.BACKUP_OK:
 # the flag is set by the shell's own write, and not by a restore's writes
 sv = gm.ShellView()
 sv.lv, sv.proc, sv.remote = 1, 1, 4096
-sv._write = lambda obj, off=0: 1
+remote = {}
+positions = [(x, y) for name, x, y in C]
+sv._write = lambda obj, off=0: remote.__setitem__(off, obj) or True
 sv._read = lambda obj, off=0: 1
 sv.open = lambda: True
-sv.count = lambda: 2
-sv.item_text = lambda i: "A" if i == 0 else "B"
-gm.send_msg = lambda *a, **k: 1
+sv.count = lambda: len(C)
+sv.item_text = lambda i: C[i][0]
+sv.item_pos = lambda i: positions[i]
+
+
+def shell_message(hwnd, msg, index, pointer):
+    if msg == gm.LVM_FINDITEMW:
+        info = remote[0]
+        name = remote[info.psz - sv.remote].value
+        return next((i for i in range(index + 1, len(C))
+                     if C[i][0].casefold() == name.casefold()),
+                    gm.ctypes.c_size_t(-1).value)
+    if msg == gm.LVM_SETITEMPOSITION32:
+        if not sv._restoring and not gm._read_backup().get("dirty"):
+            bad.append("icon write reached Explorer before dirty protection was saved")
+        positions[index] = (remote[0].x, remote[0].y)
+    return 1
+
+
+gm.send_msg = shell_message
 gm.LAYOUT_DIRTY = False
 sv.set_item_pos(0, 5, 5)
 by_move = gm.LAYOUT_DIRTY
 gm.LAYOUT_DIRTY = False
-sv.restore([["A", 1, 2], ["B", 3, 4]])
+sv.restore(C)
 by_restore = gm.LAYOUT_DIRTY
 print("dirty by a move       : %s   by a restore: %s" % (by_move, by_restore))
 if not by_move:

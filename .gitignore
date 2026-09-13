@@ -13,6 +13,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.venv-linux/
 venv/
 env/
 
@@ -23,3 +24,6 @@ env/
 Thumbs.db
 desktop.ini
 tests/.tmp/
+build/
+dist/
+release/

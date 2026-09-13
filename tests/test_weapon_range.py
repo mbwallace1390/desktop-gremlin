@@ -88,8 +88,12 @@ def square_up(weapon, gap):
         f.on_ground, f.hp, f.stun = True, 100.0, 0.0
         f.tumble = f.squash = 0.0
         f.carry = None
+        # A blink consumes AI randomness. Reset it so prior flight duration
+        # cannot change the seeded spread of the next confetti/minigun shot.
+        f.blink = 3.0
     a.foe, b.foe = b, a
     a.face, a.plan, a.mode = 1, weapon, "fight"
+    a.per = dict(a.per, weapons=tuple(gm.WEAPONS))
     app.shots = []
     app.parts, app.booms, app.bolts, app.slashes = [], [], [], []
     real = random.random
@@ -124,10 +128,10 @@ def follow(shot):
         px, py, plife = shot["x"], shot["y"], shot["life"]
         app.projectiles(1 / 40.0)
         if shot not in app.shots:
-            # life first: at the boundary a round satisfies both conditions,
-            # and calling that "the floor" sent me hunting a fault that was
-            # not there
-            return abs(px - x0), ("ran out of life" if plife <= 1 / 20.0
+            # Only explosive fuses end a moving shot on a timer. Ordinary
+            # rounds can now outlive the old cleanup deadline.
+            return abs(px - x0), ("fuse expired" if shot["k"] in ("bomb", "blackhole")
+                                  and plife <= 1 / 20.0
                                   else "hit the floor"
                                   if py >= app.ground_at(px) - 12
                                   else "left the screen")

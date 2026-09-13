@@ -1,0 +1,7 @@
+# Build-time only. Users run the bundled executable without installing Python.
+# Build with Ubuntu 22.04's Python 3.10 to keep the glibc baseline at 2.35.
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.7
+altgraph==0.17.5
+packaging==26.3
+setuptools==84.0.0

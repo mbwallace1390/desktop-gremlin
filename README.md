@@ -1,8 +1,26 @@
 # Desktop Gremlin
 
-One to ten chaotic stick figures who live **on top of** your real Windows
-desktop and treat your actual icons and open windows as their personal
-playground.
+One to ten chaotic stick figures who live **on top of** your real desktop.
+Windows supports Explorer icons and open windows. Linux X11 supports open
+windows and the desktop floor, including climbing, dragging gremlins and
+optional window nudges with restoration.
+
+**3.1.0:** Linux X11 desktop support and bundled Windows/Linux downloads.
+Wayland sessions and Linux desktop icon rearrangement are not supported.
+
+**3.0.0 expansion:** seven new weapons, parkour and playground toys, friendships
+and staged group scenes, a custom cast and three play modes. See the
+[feature guide](EXPANSION_GUIDE.md) for the complete list and controls.
+
+The additions are a returning **boomerang**, **bubble** cannon, **freeze** ray,
+**swap** gun, boxing **glove**, ricocheting **rubber** balls and sticky **foam**.
+
+Windows native rendering remains disabled after a desktop input
+regression. Normal startup uses Tk, including with older saved settings.
+Linux uses the same Tk drawing with X11 shapes that pass empty-space clicks
+through to the application underneath.
+**Ctrl+Alt+Shift+Q** exits Gremlin without using the mouse (when the shortcut
+registers successfully). Animation, visibility and engine improvements remain.
 
 They aren't a wallpaper. A wallpaper sits *behind* your icons and can't see
 them. This lot sit above everything and read the real thing — where your icons
@@ -11,16 +29,40 @@ clicked, whether you're even at the keyboard.
 
 Then they climb on all of it, and fight each other.
 
-![Every pose and weapon](docs/poses.png)
+![Weapons, playground toys and group scenes drawn by the Tk app](docs/expansion-preview.svg)
 
-*(That picture predates the black-figure redesign — the poses and weapons
-are current, the colours are not.)*
+*Actual app drawing staged on simulated terrain in a hidden Tk window.*
 
 ---
 
-## Install
+## Download and run
 
-Needs **Windows** and **Python 3.8+** ([python.org](https://www.python.org/downloads/) —
+Both releases include Python, Tk and required application libraries. End users
+install no Python or pip packages. Linux needs an x64 glibc desktop compatible
+with Ubuntu 22.04 or newer and an X11 session.
+
+1. Open [GitHub Releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
+2. Under the release's **Assets**, download **DesktopGremlin-3.1.0-Windows-x64.zip**.
+3. Right-click the ZIP, choose **Extract All**, then open the extracted folder.
+4. Double-click **DesktopGremlin.exe**. Keep its `_internal` folder beside it.
+
+Choose the executable archive under the release's Assets. GitHub's **Source code**
+downloads are for developers.
+See [the download guide](USER_DOWNLOAD_GUIDE.md) for updating and uninstalling.
+
+On Linux, download **DesktopGremlin-3.1.0-Linux-x64.tar.gz**, extract it, and
+open **DesktopGremlin** inside the extracted folder. Keep `_internal` beside
+it. A small control window provides Settings, Performance, Pause, Bring them
+to my cursor, Put my windows back, and Quit. Right-click a gremlin to show it.
+See [Linux download instructions](USER_DOWNLOAD_LINUX.md).
+
+GitHub Actions builds both native packages and prepares a draft release only
+after both pass. Published downloads appear under Releases → Assets.
+See [build instructions](packaging/BUILDING.md).
+
+## Run from source (developers)
+
+Windows needs **Python 3.8+** ([python.org](https://www.python.org/downloads/) —
 tick *Add python.exe to PATH* during setup).
 
 ```
@@ -39,7 +81,14 @@ pip install -r requirements.txt
 python desktop_gremlin.py
 ```
 
-Everything lives on the **tray icon**, bottom-right: Settings, Pause, Bring
+Linux developers need Python 3.8+, Tk and X11/SHAPE system libraries. Run
+`python3 desktop_gremlin.py` in an X11 session. See
+[Linux build and test instructions](packaging/LINUX_BUILDING.md).
+Linux settings and memory live in `$XDG_DATA_HOME/DesktopGremlin` or
+`~/.local/share/DesktopGremlin`. The optional login entry is stored at
+`$XDG_CONFIG_HOME/autostart/DesktopGremlin.desktop` (normally `~/.config`).
+
+Everything lives on the **tray icon**, bottom-right: Settings, Performance, Pause, Bring
 them to my cursor, Restore my icon layout, Put my windows back, Quit.
 Right-clicking a gremlin also opens Settings.
 
@@ -60,8 +109,9 @@ desktop_gremlin.py` instead, or just use the .bat.
 | Where the floor is | per-monitor work area, so they stand *on* your taskbar |
 
 Rescanned every 1.6 seconds, on a thread of its own so a busy Explorer never
-stalls the animation. Icon tops and window title bars become platforms. Drag a
-window across the screen and whoever's standing on it rides along.
+stalls the animation. Occupied windows are also tracked up to 30 times a second
+so their passengers follow while you drag. Icon tops and window title bars
+become platforms.
 
 ---
 
@@ -122,13 +172,15 @@ two is always the same two and their records carry over between runs.
 | 9 | Drama | over-reacts to everything, sulks longest |
 | 10 | Veteran | economical, few words, efficient |
 
-The figures are all the same black. Each one has its own **halo colour**, its
+The figures share a dark body by default; choose light bodies and optional
+contrast outlines in Settings for a dark desktop. Each one has its own **halo colour**, its
 own temperament — how readily it picks a fight, how much it talks, how fast it
 moves, how often it jumps, how likely it is to steal rather than smash, and how
 much punishment it takes before breaking off — and its own dialogue, right down
 to what it says when you pick it up. No two of them share a line.
 
-It's a free-for-all: everyone goes for whoever is nearest. They chase, strike,
+Rivals draw their attention, friends can help, and temporary allies team up
+against the strongest gremlin. They chase, strike,
 knock each other flying, with a deliberate beat between strikes so a fight is
 something you can follow rather than a blur. Take enough hits and you're
 knocked out — X eyes, flat on your back — then up again a few seconds later,
@@ -137,7 +189,7 @@ Settings if you want the cartoon red to match: sprays on hits, stains on the
 floor that fade on their own — or get mopped up by a water balloon. Only they
 bleed; your icons still just spark.
 
-Set `crowd` to anything from 1 to 10.
+Set `crowd` to anything from 1 to 10, or choose exactly who joins in the Cast tab.
 
 ## They remember you
 
@@ -149,7 +201,8 @@ after launch one of them will bring it up — *"you've thrown me 41 times"*,
 come back keener, with a different line for it.
 
 They also develop a grudge against whichever icon they have picked on most, and
-greet it by name.
+greet it by name. Friendships and rivalries are stored as 45 possible numeric
+scores between the ten character identities. Custom nicknames stay in settings.
 
 **Counters, never a log.** Nothing about which applications or windows you use
 is written to disk. The only names stored are desktop icon labels, which
@@ -175,9 +228,9 @@ Turn the lot off with **react_to_windows**.
 
 **bored → hyped → furious → smug → sulking**, and asleep.
 
-The figures themselves are black. Mood is the **halo round the head** — amber
+Mood is the **halo round the head** — amber
 when hyped, red when furious, dim when asleep — plus posture and the face, which
-is drawn light so you can actually read it. Every mood has its own eyes and
+automatically contrasts with the selected body colour. Every mood has its own eyes and
 mouth: furious brows, a hyped grin, a smug smirk, X eyes when knocked out.
 
 The halo tells you who as well as how they feel: each character shifts its own
@@ -210,6 +263,10 @@ of tank, riding on another one's shoulders, or surfing across the desktop
 standing on one of your actual icons — that last one obeys the same
 `move_icons` switch as dragging, and never happens without the layout backup.
 The nervous ones deploy a parachute on long falls. The grump rides nothing.
+
+For elevated targets they can plan short routes over reachable platforms,
+using jumps and climbs. Moving platforms invalidate the route; failed steps
+get a cooldown so they do not keep attempting the same blocked approach.
 
 ## Playing with them
 
@@ -251,7 +308,9 @@ it — anyone out of sight for more than a moment is brought back round.
 
 ## Files it writes
 
-All of them sit next to the script, and every one is safe to delete.
+The packaged app stores these in `%LOCALAPPDATA%\DesktopGremlin`.
+Source runs keep them next to the script. Preserve the icon backup until you
+have restored any moved icons; deleting it removes that undo information.
 
 | File | What |
 |---|---|
@@ -271,6 +330,18 @@ All of them sit next to the script, and every one is safe to delete.
 | `fps` | `40` | |
 | `chaos` | `1.0` | how fast they escalate; scales icon-stealing too |
 | `crowd` | `2` | how many of them, 1 to 10 |
+| `cast` | `` | empty uses crowd order; otherwise chosen distinct character identities |
+| `profiles` | `{}` | per-character nickname, halo color, hat and optional allowed weapons |
+| `play_mode` | `mischief` | peaceful activities, mixed mischief, or frequent battle |
+| `group_scenes` | `true` | friendships, rescues, staged comedy and quiet group activities |
+| `parkour` | `true` | pendulum swings, wall kicks, rolls, vaults, slides, planes and boosts |
+| `toy_props` | `true` | temporary crates, seesaws, ramps, fans and conveyors |
+| `renderer` | `tk` | Tk only; older `auto` settings cannot enable native presentation |
+| `body_theme` | `dark` | `dark` or `light`, with contrasting faces |
+| `halo_strength` | `1.0` | mood halo strength, 0.5 to 2.0 |
+| `outline` | `false` | contrast outlines around limbs and body |
+| `effects_quality` | `1.0` | decorative particle detail, 0.25 to 1.0 |
+| `auto_quality` | `true` | reduce decorative detail under sustained frame pressure |
 | `move_icons` | `false` | let them physically drag your icons |
 | `move_windows` | `false` | let them nudge your windows a few pixels; *Put my windows back* undoes it |
 | `shots_over_icons` | `true` | stray fire passes over icons; aimed fire and blasts still land |
@@ -282,8 +353,16 @@ All of them sit next to the script, and every one is safe to delete.
 | `pause_fullscreen` | `true` | hide while a fullscreen app is in front: a game, a film, a slideshow |
 | `start_with_windows` | `false` | adds a `Run` key entry |
 
-The frame rate is what you set only while you are watching. Asleep, they tick
-at 10 a second; on battery, at 20; hidden behind a fullscreen app, four.
+The rendering rate is what you set while you are watching. Asleep, they draw
+at up to 10 a second; on battery, at up to 20; hidden behind a fullscreen app,
+the environment is checked four times a second. Simulation uses fixed 60 Hz
+steps independently of rendering. Pause and fullscreen holds freeze it;
+long stalls discard excess backlog instead of producing a burst of old actions.
+
+**Tray → Performance** shows the active renderer, actual FPS, simulation and
+drawing cost, particle count, current detail, and discarded simulation time.
+Automatic quality changes only decoration. Disable it to keep your chosen
+detail level. Settings are grouped into Look, Performance, Behaviour, Cast, and Your desktop.
 
 ---
 
@@ -320,16 +399,21 @@ at 10 a second; on battery, at 20; hidden behind a fullscreen app, four.
 
 ## How it works
 
-A single always-on-top `tkinter` window covering the virtual screen, made
-invisible and click-through by keying one exact colour (`#010101`) via
-`SetLayeredWindowAttributes`. Anything drawn in that colour is both invisible
-and passes mouse clicks through; anything else is visible and clickable — which
-is why the grab rings are the hit target.
+A single always-on-top `tkinter` window covers the virtual screen. Its layered
+window uses `#010101` as a transparency colour, including input transparency in
+empty space. The native visual/input windows are disabled: their transparent
+graphics did not provide reliable input transparency to other applications.
+See [the incident report](INCIDENT_INPUT_LOCKOUT.md) for the cause and corrected
+test coverage. The normal application has no path to construct a native overlay.
 
 The figures are drawn procedurally, not from sprites: a skeleton with two-bone
 IK for the arms and legs, posed per state, then squashed and mirrored. That's
 why they scale cleanly from icon-sized to huge, and why adding a weapon is a
 dozen lines rather than a spritesheet.
+
+Short eased transitions connect upper-body poses while planted feet and ledge
+grips stay exact. Weapons have distinct windups, recoil, and impact effects;
+projectiles use the same posed muzzle that gets drawn.
 
 Physics is one-way platforms with a ledge-grab pass — and anything climbable
 overhead gets scaled hand-over-hand and mantled, rather than bounced at; the
@@ -340,11 +424,11 @@ like a small thing rather than a slowed-down big one.
 
 ## If something goes wrong
 
-Launched from the `.bat` there is no console, so nothing can print an error at
-you. Anything that goes wrong is written to **`gremlin_log.txt`** next to the
-script instead, and the tray icon pops a balloon once to say so. That file is
+The EXE and `.bat` launch without a console. Diagnostics go to
+**`gremlin_log.txt`** in `%LOCALAPPDATA%\DesktopGremlin` for the EXE, or beside
+the script for source runs. The tray icon pops a balloon once to say so. That file is
 the first place to look, and the right thing to attach to an issue. Its first
-line names the commit that was running, read straight out of `.git`, so a fix
+banner names the version and the commit when available, so a fix
 that "didn't work" can be checked against the code that actually ran.
 
 ```
@@ -362,9 +446,13 @@ screenshot.
 python tests\run_all.py
 ```
 
-Eighteen checks, a few seconds, nothing to install. They drive the real app
+41 checks on Windows; the Linux runner selects shared and Linux checks.
+Linux acceptance requires an isolated Xvfb session as documented in the Linux
+build guide. Frozen Linux acceptance also proves real input delivery and exit
+using a separate receiver process.
+They drive the real app
 with the Windows shell stubbed out, so they never touch your desktop. Every one
-of them encodes a bug that actually shipped. The same checks run on every push
+of them checks a concrete behavior or regression. The same checks run on every push
 in GitHub Actions, on a Windows runner.
 
 ---

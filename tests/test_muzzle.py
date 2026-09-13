@@ -20,6 +20,12 @@ import harness  # noqa: E402
 gm = harness.load("muzzle", crowd=2)
 app = harness.build(gm)
 harness.fake_terrain(app, [])
+# Keep the fixture smaller than the release position below: physics moves the
+# fighter after emission, so reading the tip afterward must not pass by chance
+# just because the developer's monitor happens to be tall enough.
+app.mons = [((0, 0, 1280, 720), (0, 0, 1280, 720))]
+app.ox = app.oy = 0
+app.W, app.H = 1280, 720
 f = app.fighters[0]
 S = f.sc
 DT = 1 / 40.0
@@ -100,6 +106,7 @@ def fire(w, face, dx, dy, squash=0.0, tumble=0.0):
     app.bolts.clear()
     released_tip = []
     original_release = app.release_attack
+    original_shoot = app.shoot
 
     def observe_release(fighter):
         original_release(fighter)
@@ -107,11 +114,20 @@ def fire(w, face, dx, dy, squash=0.0, tumble=0.0):
         # The glove visibly launches him backwards within this same frame.
         released_tip.append(drawn_tip(w, fighter.aim))
 
+    def observe_shoot(fighter, *args, **kwargs):
+        original_shoot(fighter, *args, **kwargs)
+        if w == "minigun":
+            # Continuous bursts bypass release_attack. Observe their barrel
+            # here, before this update's physics can move the fighter.
+            released_tip.append(drawn_tip(w, fighter.aim))
+
     app.release_attack = observe_release
+    app.shoot = observe_shoot
     try:
         app.update_fighter(f, DT)
     finally:
         app.release_attack = original_release
+        app.shoot = original_shoot
     if w == "lightning":
         spawn = tuple(app.bolts[-1]["pts"][:2]) if app.bolts else None
     else:

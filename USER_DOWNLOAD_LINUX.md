@@ -2,7 +2,7 @@ Desktop Gremlin for Linux
 =========================
 
 1. Open [Desktop Gremlin releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
-2. Under Assets, download DesktopGremlin-3.2.0-Linux-x64.tar.gz.
+2. Under Assets, download DesktopGremlin-3.2.1-Linux-x64.tar.gz.
 3. Right-click the archive and choose Extract Here, then open its DesktopGremlin folder.
 4. Double-click DesktopGremlin. If your file manager asks, choose Run.
 
@@ -24,6 +24,10 @@ Use the small Desktop Gremlin control window for Settings, Pause, Bring them to
 my cursor, Put my windows back and Quit. Right-clicking a gremlin opens the same
 menu. Ctrl+Alt+Shift+Q also quits when available; the control window shows its
 availability. No terminal is needed during normal use.
+
+Version 3.2.1 reduces repeated physics and collision calculations and improves
+the Performance panel's measurements. Your existing settings and physics choices
+are preserved.
 
 Version 3.2 adds more responsive throws, hits, bounces, loose limbs and moving
 crates. In Settings, choose Physics: normal, moon, bouncy or heavy. Surface feel

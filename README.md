@@ -5,6 +5,12 @@ Windows supports Explorer icons and open windows. Linux X11 supports open
 windows and the desktop floor, including climbing, dragging gremlins and
 optional window nudges with restoration.
 
+**3.2.1 performance:** less repeated crate geometry and collision work, faster
+icon-recovery lookups, bounded waits for busy Windows Explorer, and clearer
+performance readings. Controlled hidden-window Windows measurements found
+21–50% less CPU work in crowded toy scenes; these are not visible-desktop FPS
+claims. See the [measurements and verification](docs/PERFORMANCE.md).
+
 **3.2.0 physics:** momentum-aware hits and blasts, directional bounces,
 constrained ragdoll limbs during grabs, throws and knockouts, smoother mouse
 throws, moving crates, weighted seesaws, swept body/window-edge contacts,
@@ -48,7 +54,7 @@ install no Python or pip packages. Linux needs an x64 glibc desktop compatible
 with Ubuntu 22.04 or newer and an X11 session.
 
 1. Open [GitHub Releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
-2. Under the release's **Assets**, download **DesktopGremlin-3.2.0-Windows-x64.zip**.
+2. Under the release's **Assets**, download **DesktopGremlin-3.2.1-Windows-x64.zip**.
 3. Right-click the ZIP, choose **Extract All**, then open the extracted folder.
 4. Double-click **DesktopGremlin.exe**. Keep its `_internal` folder beside it.
 
@@ -56,7 +62,7 @@ Choose the executable archive under the release's Assets. GitHub's **Source code
 downloads are for developers.
 See [the download guide](USER_DOWNLOAD_GUIDE.md) for updating and uninstalling.
 
-On Linux, download **DesktopGremlin-3.2.0-Linux-x64.tar.gz**, extract it, and
+On Linux, download **DesktopGremlin-3.2.1-Linux-x64.tar.gz**, extract it, and
 open **DesktopGremlin** inside the extracted folder. Keep `_internal` beside
 it. A small control window provides Settings, Performance, Pause, Bring them
 to my cursor, Put my windows back, and Quit. Right-click a gremlin to show it.
@@ -459,7 +465,7 @@ screenshot.
 python tests\run_all.py
 ```
 
-46 checks on Windows; the Linux runner selects shared and Linux checks.
+50 checks on Windows; the Linux runner selects shared and Linux checks.
 Linux acceptance requires an isolated Xvfb session as documented in the Linux
 build guide. Frozen Linux acceptance also proves real input delivery and exit
 using a separate receiver process.

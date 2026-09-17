@@ -47,14 +47,16 @@ class PerformanceMonitor:
     def snapshot(self):
         rows = list(self.samples)
         if not rows:
-            return dict(fps=0.0, update_ms=0.0, draw_ms=0.0, p95_ms=0.0,
+            return dict(fps=0.0, update_ms=0.0, draw_ms=0.0, p95_ms=0.0, frame_p95_ms=0.0,
                         steps=0.0, detail=self.detail, dropped=self.dropped_seconds)
-        intervals = [r[0] for r in rows if r[0] > 0]
+        intervals = sorted(r[0] for r in rows if r[0] > 0)
         costs = sorted(r[1] + r[2] for r in rows)
         n = len(rows)
         return dict(fps=len(intervals) / sum(intervals) if intervals else 0.0,
                     update_ms=sum(r[1] for r in rows) / n,
                     draw_ms=sum(r[2] for r in rows) / n,
                     p95_ms=costs[max(0, math.ceil(n * .95) - 1)],
+                    frame_p95_ms=(intervals[math.ceil(len(intervals) * .95) - 1] * 1000
+                                  if intervals else 0.0),
                     steps=sum(r[3] for r in rows) / n, detail=self.detail,
                     dropped=self.dropped_seconds)

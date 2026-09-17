@@ -24,7 +24,7 @@ Quit hides the overlay first and must finish teardown even if cleanup fails.
 python tests\run_all.py
 ```
 
-46 checks on Windows; `tests/run_all.py` selects the shared and Linux subset
+50 checks on Windows; `tests/run_all.py` selects the shared and Linux subset
 on Linux. Linux tests require isolated Xvfb and `GREMLIN_ISOLATED_X11=1`.
 Production never synthesizes input. `gremlin_x11_probe.py` is an opt-in source
 and frozen acceptance helper that uses a separate receiver process and proves
@@ -186,7 +186,35 @@ not slow simulation time. Test this through the real run loop with a fake clock.
 **Quality is decoration only.** `self.fx_random` is separate from the AI random
 stream. Particle generation/caps consume `effect_detail()`; collision objects
 and fixed simulation steps never do. The performance panel reports CPU-side
-submission/presentation time, not GPU completion time.
+submission/presentation time, not GPU completion time. Windows explicitly flushes
+Tk idle painting inside the drawing measurement; Linux already paints while
+presenting its shaped overlay. The 95% frame gap includes scheduling delays;
+95% work measures simulation plus drawing, not every source of frame delay.
+
+**Performance caches must follow physical changes.** Toy geometry is keyed by
+position, angle, dimensions, kind and ID. Sleeping support stamps also include
+desktop surfaces, neighboring props/velocities, floor and physics settings.
+Projectile broad-phase candidates preserve terrain order and full swept bounds;
+the tracked bounds list invalidates on replacement or mutation. Never shorten
+projectile range to improve a benchmark. `test_motion_performance.py` and
+`test_collision_performance.py` guard invalidation and collision equivalence.
+
+**Frame shell I/O has a cumulative 4 ms allowance.** Scanner lock contention
+returns a safe unavailable result instead of queuing the frame; nested identity
+checks share the remaining IPC timeout. Background scans and explicit restores
+retain their usual allowance. Physics work does not consume the shell allowance.
+File bytes and metadata are checked before reusing parsed recovery data, while
+current icon labels and uniqueness are still checked for every move. Durable protection remains
+mandatory before moving anything. Disk/OS scheduling can exceed the IPC allowance;
+it is not a hard real-time promise. `test_icon_performance.py` covers these gates.
+
+**Benchmark the full feature set.** `tests/benchmark_performance.py` drives the
+real frame callback at controlled 40 Hz arrivals with 60 Hz simulation, all
+expansion systems enabled, and reports mean/p95/max for repeated seeded scenes.
+The Windows window stays hidden: visible compositor cost and real Explorer
+latency are outside these numbers. `test_performance_budget.py` applies a 25 ms
+p95 CPU-work budget to mixed toys and a 400-icon desktop. See
+`docs/PERFORMANCE.md` for measurements and reproduction instructions.
 
 **The icon backup is re-taken every launch, unless the last run left icons
 moved.** `set_item_pos` persists the file's `dirty` flag before the first move

@@ -26,6 +26,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # name -> file, in rough order of how fast they are
 CHECKS = [
+    ("motion_performance", "test_motion_performance.py", "cached geometry and sleeping support invalidation"),
+    ("collision_performance", "test_collision_performance.py", "indexed sweeps preserve exact collisions"),
+    ("icon_performance", "test_icon_performance.py", "cached recovery and bounded frame I/O"),
+    ("performance_budget", "test_performance_budget.py", "full-feature frame p95 at 60 Hz physics"),
     ("physics_mixed", "test_physics_mixed.py", "all physics presets, sizes and cleanup"),
     ("physics_upgrade", "test_physics_upgrade.py", "momentum, body sweeps, materials and grabs"),
     ("physics_arsenal", "test_physics_arsenal.py", "surface normals, ricochets and toy cover"),
@@ -80,7 +84,7 @@ def main(argv):
     wanted = [a for a in argv if not a.startswith("-")]
     windows_only = {"frozen_runtime", "input_recovery", "desktop_recovery", "renderer",
                     "audit_shell", "audit_runtime", "diagnostics", "runtime",
-                    "performance_upgrade", "audit_settings", "settings", "icons"}
+                    "performance_upgrade", "icon_performance", "audit_settings", "settings", "icons"}
     available = [c for c in CHECKS if sys.platform != "linux" or c[0] not in windows_only]
     if sys.platform == "linux" and os.environ.get("GREMLIN_ISOLATED_X11") != "1":
         print("Run Linux acceptance on isolated Xvfb with GREMLIN_ISOLATED_X11=1.")

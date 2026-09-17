@@ -81,11 +81,11 @@ GitHub's [artifact upload/download actions](https://docs.github.com/en/actions/t
 transfer the two build results into the draft-release job.
 
 After reviewing the source and approving its publication, commit and push it,
-then create and push its matching version tag. For version 3.2.0:
+then create and push its matching version tag. For version 3.2.1:
 
 ```sh
-git tag v3.2.0
-git push origin v3.2.0
+git tag v3.2.1
+git push origin v3.2.1
 ```
 
 Wait for **Build Windows and Linux downloads** to finish, then open the draft
@@ -94,8 +94,8 @@ Download both OS archives and inspect the retained self-test evidence. Check
 the Linux archive before extracting it:
 
 ```sh
-sha256sum --check DesktopGremlin-3.2.0-Linux-x64.sha256
-tar -xzf DesktopGremlin-3.2.0-Linux-x64.tar.gz
+sha256sum --check DesktopGremlin-3.2.1-Linux-x64.sha256
+tar -xzf DesktopGremlin-3.2.1-Linux-x64.tar.gz
 ```
 
 Check startup, settings, ordinary desktop click-through, dragging, window undo

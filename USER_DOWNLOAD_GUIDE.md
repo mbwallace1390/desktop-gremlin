@@ -2,7 +2,7 @@ Desktop Gremlin for Windows
 ==========================
 
 1. Open [Desktop Gremlin releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
-2. Under Assets, download DesktopGremlin-3.2.0-Windows-x64.zip.
+2. Under Assets, download DesktopGremlin-3.2.1-Windows-x64.zip.
 3. Right-click the ZIP and choose Extract All.
 4. Open the extracted DesktopGremlin folder and double-click DesktopGremlin.exe.
 
@@ -12,6 +12,10 @@ DesktopGremlin.exe. The GitHub "Source code" downloads are for developers.
 The gremlins appear on your desktop. Open the system tray arrow near the clock
 and right-click the Desktop Gremlin icon for Settings, Pause and Quit. You can
 also quit with Ctrl+Alt+Shift+Q. Normal use has no command window.
+
+Version 3.2.1 reduces repeated physics and collision calculations, limits waits
+for busy Windows Explorer, and improves the Performance panel's measurements.
+Your existing settings and physics choices are preserved.
 
 Version 3.2 adds more responsive throws, hits, bounces, loose limbs and moving
 crates. In Settings, choose Physics: normal, moon, bouncy or heavy. Surface feel

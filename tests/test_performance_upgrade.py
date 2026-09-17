@@ -2,6 +2,7 @@
 import json
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 import harness
 
 gm = harness.load("performance_upgrade", crowd=1)
@@ -9,6 +10,57 @@ from gremlin_performance import PerformanceMonitor
 
 
 class PerformanceUpgrade(unittest.TestCase):
+    def test_frame_intervals_report_tail_not_only_submission_cost(self):
+        monitor = PerformanceMonitor()
+        self.assertEqual(monitor.snapshot()["frame_p95_ms"], 0)
+        for interval in [.025] * 18 + [.04, .1]:
+            monitor.record(interval, 1, 2, 1, 0, .025)
+        self.assertAlmostEqual(monitor.snapshot()["frame_p95_ms"], 40)
+        self.assertAlmostEqual(monitor.snapshot()["p95_ms"], 3)
+
+    def test_real_loop_times_tk_paint_and_budgets_shell_work(self):
+        original = gm.tk.Tk
+        def hidden():
+            root = original()
+            root.withdraw()
+            return root
+        app = None
+        try:
+            with mock.patch.object(gm.tk, "Tk", hidden):
+                app = harness.build(gm)
+            clock, scheduled, events = [100.], [], []
+            def cost(event, amount):
+                events.append(event)
+                clock[0] += amount
+            from contextlib import contextmanager
+            @contextmanager
+            def budget():
+                events.append("budget_start")
+                try:
+                    yield
+                finally:
+                    events.append("budget_end")
+            fake_time = SimpleNamespace(perf_counter=lambda: clock[0])
+            app.root.after = lambda ms, fn: scheduled.append(fn)
+            app.root.mainloop = lambda: None
+            app.check_environment = app.tray.pump = app.tray.drain = lambda: None
+            app.update = lambda dt: cost("simulation", .002)
+            app.flush_frame = lambda: cost("flush", .001)
+            app.draw = lambda: cost("draw", .003)
+            app.root.update_idletasks = lambda: cost("paint", .007)
+            with mock.patch.object(gm, "time", fake_time), \
+                    mock.patch.object(gm.SHELL, "frame_budget", budget, create=True):
+                app.run()
+                clock[0] += .025
+                scheduled.pop()()
+            sample = app.performance.snapshot()
+            self.assertAlmostEqual(sample["update_ms"], 3, places=5)
+            self.assertAlmostEqual(sample["draw_ms"], 10, places=5)
+            self.assertEqual(events, ["budget_start", "simulation", "flush",
+                                      "budget_end", "draw", "paint"])
+        finally:
+            harness.teardown(gm, app)
+
     def test_sustained_pressure_and_slow_recovery(self):
         monitor = PerformanceMonitor()
         monitor.record(.1, 20, 70, 1, .04, .025)

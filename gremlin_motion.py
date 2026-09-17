@@ -27,6 +27,7 @@ class MotionEngine:
         self.props = []
         self._serial = 0
         self._build_in = 12.0
+        self._support_terrain = None
 
     def _free(self, f, active=False):
         return (f in self.app.fighters and f.hp > 0 and not f.grabbed
@@ -281,36 +282,67 @@ class MotionEngine:
             return prop["y"] - prop["h"] + (x - prop["x"]) * math.tan(prop["angle"])
         return prop["y"] - prop["h"]
 
+    @staticmethod
+    def _geometry_key(prop):
+        # Props are ordinary mutable dictionaries. Check values at every read so
+        # impulses, contact correction and external placement cannot leave stale
+        # geometry behind between physics, projectile collision and drawing.
+        return (prop["kind"], prop["id"], prop["x"], prop["y"],
+                prop["w"], prop["h"], prop["angle"])
+
+    def _geometry(self, prop):
+        key = self._geometry_key(prop)
+        cached = prop.get("_geometry")
+        if cached is None or cached["key"] != key:
+            cached = prop["_geometry"] = {"key": key}
+        return cached
+
+    def _prop_platforms(self, prop):
+        cached = self._geometry(prop)
+        if "platforms" not in cached:
+            result = []
+            if prop["kind"] != "fan":
+                left, _top, right, _bottom = self._bounds(prop)
+                width = right - left
+                count = 10 if prop["kind"] in ("crate", "ramp", "seesaw") else 1
+                for i in range(count):
+                    x0, x1 = left + width * i / count, left + width * (i + 1) / count
+                    result.append((x0, x1, self._height(prop, (x0 + x1) / 2), "toy", prop["id"]))
+            cached["platforms"] = tuple(result)
+        return cached["platforms"]
+
     def platforms(self):
         if not self.cfg.get("toy_props", True):
             return []
-        result = []
-        for prop in self.props:
-            if prop["kind"] == "fan":
-                continue
-            left, _top, right, _bottom = self._bounds(prop)
-            width = right - left
-            count = 10 if prop["kind"] in ("crate", "ramp", "seesaw") else 1
-            for i in range(count):
-                x0, x1 = left + width * i / count, left + width * (i + 1) / count
-                result.append((x0, x1, self._height(prop, (x0 + x1) / 2), "toy", prop["id"]))
-        return result
+        # Return a fresh outer list: callers may extend it without changing the
+        # cached surfaces shared by the remaining fighters in this frame.
+        return [surface for prop in self.props for surface in self._prop_platforms(prop)]
 
     def _vertices(self, prop):
         """Drawing and swept collisions use the same rigid crate corners."""
+        cached = self._geometry(prop)
+        if "vertices" in cached:
+            return cached["vertices"]
         cx, cy = prop["x"], prop["y"] - prop["h"] / 2
         c, s = math.cos(prop["angle"]), math.sin(prop["angle"])
         w, h = prop["w"] / 2, prop["h"] / 2
-        return [(cx + dx * c - dy * s, cy + dx * s + dy * c)
-                for dx, dy in ((-w, -h), (w, -h), (w, h), (-w, h))]
+        cached["vertices"] = tuple((cx + dx * c - dy * s, cy + dx * s + dy * c)
+                                   for dx, dy in ((-w, -h), (w, -h), (w, h), (-w, h)))
+        return cached["vertices"]
 
     def _bounds(self, prop):
+        cached = self._geometry(prop)
+        if "bounds" in cached:
+            return cached["bounds"]
         if prop["kind"] == "crate":
             corners = self._vertices(prop)
-            return (min(x for x, _y in corners), min(y for _x, y in corners),
-                    max(x for x, _y in corners), max(y for _x, y in corners))
-        left, right = prop["x"] - prop["w"] / 2, prop["x"] + prop["w"] / 2
-        return left, min(self._height(prop, left), self._height(prop, right)), right, prop["y"]
+            cached["bounds"] = (min(x for x, _y in corners), min(y for _x, y in corners),
+                                max(x for x, _y in corners), max(y for _x, y in corners))
+        else:
+            left, right = prop["x"] - prop["w"] / 2, prop["x"] + prop["w"] / 2
+            cached["bounds"] = (left, min(self._height(prop, left), self._height(prop, right)),
+                                right, prop["y"])
+        return cached["bounds"]
 
     def _polygon_contact(self, x0, y0, x1, y1, vertices, radius):
         """Clip a swept point against a convex polygon's outward half planes."""
@@ -410,32 +442,69 @@ class MotionEngine:
         left, _top, right, bottom = self._bounds(prop)
         floor = self.app.ground_at(prop["x"], previous_bottom)
         best = (floor, ("floor", None), 0.0) if bottom >= floor - .5 else None
-        surfaces = [(a, b, y, (kind, key), 0.0)
-                    for a, b, y, kind, key in self.app.terrain.platforms]
+        for a, b, y, kind, key in self.app.terrain.platforms:
+            if (a <= prop["x"] <= b and min(right, b) - max(left, a) > 5 and bottom >= y - .5
+                    and previous_bottom <= y + 4
+                    and (best is None or y < best[0])):
+                best = y, (kind, key), 0.0
         for other in self.props:
             if other is prop or other["kind"] == "fan":
                 continue
             a, _t, b, _d = self._bounds(other)
+            if not (a <= prop["x"] <= b and min(right, b) - max(left, a) > 5):
+                continue
             sample = clamp(prop["x"], a + .01, b - .01)
-            surfaces.append((a, b, self._height(other, sample),
-                             ("toy", other["id"]), other["vx"]))
-        for a, b, y, key, speed in surfaces:
-            if (a <= prop["x"] <= b and min(right, b) - max(left, a) > 5 and bottom >= y - .5
-                    and previous_bottom <= y + 4
+            y = self._height(other, sample)
+            if (bottom >= y - .5 and previous_bottom <= y + 4
                     and (best is None or y < best[0])):
-                best = y, key, speed
+                best = y, ("toy", other["id"]), other["vx"]
         return best
+
+    def _sleep_key(self, prop):
+        # Snapshot desktop surfaces once per update, but inspect the small prop
+        # list on every substep: a lower crate may have just moved or expired.
+        terrain = self._support_terrain
+        if terrain is None:
+            terrain = tuple(self.app.terrain.platforms)
+        neighbors = tuple((self._geometry_key(other), other["vx"], other["vy"],
+                           other["omega"], other["direction"])
+                          for other in self.props if other is not prop)
+        return (self._geometry_key(prop), prop["vx"], prop["vy"], prop["omega"],
+                prop["support"], terrain, neighbors,
+                self.app.ground_at(prop["x"], self._bounds(prop)[3]),
+                self.cfg.get("scale", 1.0), self.cfg.get("physics_preset", "normal"),
+                prop["material"])
+
+    def _sleep_driven(self, prop, support):
+        if abs(prop["vx"]) >= .8 or abs(prop["vy"]) >= 1 or abs(prop["omega"]) >= .02:
+            return True
+        for other in self.props:
+            if (other["kind"] == "fan" and abs(prop["x"] - other["x"]) < other["w"] / 2
+                    and other["y"] - 185 * self.cfg.get("scale", 1.0) < prop["y"] < other["y"]):
+                return True
+            if support is not None and support[1] == ("toy", other["id"]):
+                if ((other["kind"] == "conveyor" and other["direction"])
+                        or other["vx"] or other["vy"] or other["omega"]):
+                    return True
+        return False
 
     def _crate_step(self, prop, dt):
         K = self.cfg.get("scale", 1.0) / 1.75
         old_x, old_y = prop["x"], prop["y"]
         before = self._bounds(prop)
-        support = self._support(prop, before[3])
         if prop["sleeping"]:
-            if support is not None and abs(before[3] - support[0]) < 1:
+            sleep_key = self._sleep_key(prop)
+            if prop.get("_sleep_key") == sleep_key:
                 return
-            # A removed or displaced support must wake a previously stable stack.
+            support = self._support(prop, before[3])
+            if (support is not None and abs(before[3] - support[0]) < 1
+                    and not self._sleep_driven(prop, support)):
+                prop["support"] = support[1]
+                prop["_sleep_key"] = self._sleep_key(prop)
+                return
+            # Moved supports and newly active fans/belts wake a stable stack.
             prop["sleeping"], prop["rest"] = False, 0.0
+        prop.pop("_sleep_key", None)
         response = material(prop["material"])
         bounce = max(response["restitution"], .7 if self.cfg.get("physics_preset") == "bouncy" else 0)
         gravity = 1900 * K * preset(self.cfg.get("physics_preset", "normal"))["gravity"]
@@ -587,11 +656,15 @@ class MotionEngine:
         # A fixed upper bound prevents a delayed render from multiplying work.
         steps = max(1, min(8, int(math.ceil(max(0, dt) / (1 / 120)))))
         step = min(max(0, dt), .12) / steps
-        for _ in range(steps):
-            for prop in sorted(self.props, key=lambda p: p["y"], reverse=True):
-                if prop["kind"] == "crate":
-                    self._crate_step(prop, step)
-            self._crate_pairs()
+        self._support_terrain = tuple(self.app.terrain.platforms)
+        try:
+            for _ in range(steps):
+                for prop in sorted(self.props, key=lambda p: p["y"], reverse=True):
+                    if prop["kind"] == "crate":
+                        self._crate_step(prop, step)
+                self._crate_pairs()
+        finally:
+            self._support_terrain = None
         if expired:
             for f in self.app.fighters:
                 if f.plat and f.plat[0] == "toy" and f.plat[1] in expired:
@@ -630,8 +703,9 @@ class MotionEngine:
                 # Match the exact next segment (including physics' 6px foot
                 # tolerance), so an uphill step cannot create a false fall.
                 next_x = f.x + f.vx * dt
-                supports = [p[2] for p in self.platforms() if p[4] == prop["id"]
-                            and p[0] - 6 <= next_x <= p[1] + 6]
+                surfaces = self._prop_platforms(prop) if self.cfg.get("toy_props", True) else ()
+                supports = [p[2] for p in surfaces
+                            if p[0] - 6 <= next_x <= p[1] + 6]
                 if supports:
                     f.y, f.vy = min(supports), 0.0
                     f.plat = ("toy", prop["id"])

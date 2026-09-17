@@ -216,9 +216,9 @@ class Arsenal:
                      f.x + 14 * f.sc + radius, f.y + radius), f)
         returning = s["k"] == "boomerang" and s["phase"] == "return"
         if not returning:
-            for cx, cy, hw, hh, target in app.terrain.bounds:
-                if s["pierce"] and s["tgt"] != (target["kind"], target["key"]):
-                    continue
+            candidates = [] if s["pierce"] and s["tgt"] is None else app.terrain.projectile_candidates(
+                x0, y0, x1, y1, radius, target=s["tgt"] if s["pierce"] else None)
+            for cx, cy, hw, hh, target in candidates:
                 consider("target", segment_contact(x0, y0, x1, y1,
                          cx - hw - radius, cy - hh - radius,
                          cx + hw + radius, cy + hh + radius), target)

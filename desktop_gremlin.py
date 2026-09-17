@@ -31,6 +31,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+from contextlib import contextmanager, nullcontext
 from tkinter import ttk
 from gremlin_profiles import (normalize_cast, normalize_profiles, selected_cast,
                               apply_profile, draw_accessory, ProfilesPanel)
@@ -60,7 +61,7 @@ if IS_WINDOWS:
 elif sys.platform != "linux":
     raise RuntimeError("Desktop Gremlin supports Windows and Linux X11.")
 
-VERSION = "3.2.0"
+VERSION = "3.2.1"
 DEBUG = "--debug" in sys.argv
 HERE, DATA_DIR = runtime_paths(__file__)
 SETTINGS_PATH = os.path.join(DATA_DIR, "gremlin_settings.json")
@@ -639,8 +640,30 @@ def _locked(fn):
     Explorer the wrong struct. Per call, not per scan: a carry in progress
     waits for one message, never for four hundred."""
     def wrapped(self, *a, **k):
-        with self._lock:
+        budget = getattr(self._frame_local, "budget", None)
+        if budget is None:
+            with self._lock:
+                return fn(self, *a, **k)
+        # Rendering must never queue behind the scanner's Explorer IPC. Nested
+        # calls share one allowance and the RLock, so safety checks stay atomic.
+        # Let nested cleanup finish (open may close an old handle); _send still
+        # refuses additional IPC once the shared deadline has expired.
+        now = time.perf_counter()
+        if not budget[1] and budget[0] <= 1e-9:
+            return None
+        if not self._lock.acquire(blocking=False):
+            return None
+        outer = budget[1] == 0
+        if outer:
+            budget[2] = now + budget[0]
+        budget[1] += 1
+        try:
             return fn(self, *a, **k)
+        finally:
+            budget[1] -= 1
+            if outer:
+                budget[0] = max(0.0, budget[0] - (time.perf_counter() - now))
+            self._lock.release()
     wrapped.__name__ = fn.__name__
     wrapped.__doc__ = fn.__doc__
     return wrapped
@@ -658,8 +681,37 @@ class ShellView:
         self._names = {}        # index -> label; reading one is the slow call
         self._names_n = -1
         self._lock = threading.RLock()
+        self._frame_local = threading.local()
         self._restoring = False # a restore's writes do not dirty the backup
         self.restore_complete = False  # set only after every applicable icon is verified
+
+    @contextmanager
+    def frame_budget(self, milliseconds=4.0):
+        """Bound cumulative frame-thread shell work, leaving scans/restores alone.
+
+        A busy shell produces the same failure sentinels as a normal timeout;
+        callers can drop a carry safely instead of stalling input and animation.
+        Physics time outside shell operations does not consume this allowance.
+        """
+        previous = getattr(self._frame_local, "budget", None)
+        if previous is None:
+            self._frame_local.budget = [max(0.0, milliseconds / 1000.0), 0, 0.0]
+        try:
+            yield
+        finally:
+            self._frame_local.budget = previous
+
+    def _send(self, msg, wparam, lparam):
+        budget = getattr(self._frame_local, "budget", None)
+        if budget is None:
+            return send_msg(self.lv, msg, wparam, lparam)
+        remaining = budget[2] - time.perf_counter()
+        if remaining <= 0:
+            return None
+        # Windows accepts whole milliseconds. Round up so a sub-ms healthy
+        # exchange remains possible, with at most one ms rounding overhead.
+        timeout = max(1, min(250, math.ceil(remaining * 1000.0 - 1e-9)))
+        return send_msg(self.lv, msg, wparam, lparam, timeout=timeout)
 
     @_locked
     def open(self):
@@ -717,13 +769,13 @@ class ShellView:
 
     @_locked
     def count(self):
-        return send_msg(self.lv, LVM_GETITEMCOUNT, 0, 0)
+        return self._send(LVM_GETITEMCOUNT, 0, 0)
 
     @_locked
     def item_rect(self, i):
         """Icon glyph rect in SCREEN pixels."""
         r = wt.RECT(LVIR_ICON, 0, 0, 0)
-        if not self._write(r) or not send_msg(self.lv, LVM_GETITEMRECT, i, self.remote):
+        if not self._write(r) or not self._send(LVM_GETITEMRECT, i, self.remote):
             return None
         if not self._read(r):
             return None
@@ -740,7 +792,7 @@ class ShellView:
     def item_pos(self, i):
         """Position in LIST coordinates, or None when the shell cannot read it."""
         p = wt.POINT(0, 0)
-        if not self._write(p) or not send_msg(self.lv, LVM_GETITEMPOSITION, i, self.remote):
+        if not self._write(p) or not self._send(LVM_GETITEMPOSITION, i, self.remote):
             return None
         if not self._read(p):
             return None
@@ -752,21 +804,21 @@ class ShellView:
         if not self._restoring:
             # A launch snapshot cannot undo icons added or renamed afterward.
             # Require one unambiguous saved/current label before protecting a move.
-            data = _read_backup()
-            if data is None:
+            protection = _backup_protection()
+            if protection is None:
                 BACKUP_OK = False
                 return False
             name = self.item_text(i)
-            if not name or sum(row[0] == name for row in data["icons"]) != 1 \
+            if not name or protection[1].get(name, 0) != 1 \
                     or not self.unique_item(i, name):
                 return False
             # Persist recovery protection BEFORE Explorer can change the desktop.
-            if not mark_layout_dirty():
+            if not mark_layout_dirty(protection):
                 return False
         p = wt.POINT(int(x), int(y))
         if not self._write(p):
             return False
-        return send_msg(self.lv, LVM_SETITEMPOSITION32, i, self.remote) is not None
+        return self._send(LVM_SETITEMPOSITION32, i, self.remote) is not None
 
     @_locked
     def unique_item(self, i, name):
@@ -781,10 +833,10 @@ class ShellView:
             return False
         # LVFI_STRING is exact (case-insensitive), without prefix matching/wrap.
         # Starting at -1 includes item zero; starting at i excludes i itself.
-        first = send_msg(self.lv, LVM_FINDITEMW, -1, self.remote)
+        first = self._send(LVM_FINDITEMW, -1, self.remote)
         if type(first) is not int or first != i:
             return False
-        duplicate = send_msg(self.lv, LVM_FINDITEMW, i, self.remote)
+        duplicate = self._send(LVM_FINDITEMW, i, self.remote)
         # send_msg stores DWORD_PTR, so native -1 can arrive unsigned.
         return type(duplicate) is int and duplicate in (-1, ctypes.c_size_t(-1).value)
 
@@ -800,7 +852,7 @@ class ShellView:
             it.cchTextMax = 260
             if not self._write(it):
                 return ""
-            length = send_msg(self.lv, LVM_GETITEMTEXTW, i, self.remote)
+            length = self._send(LVM_GETITEMTEXTW, i, self.remote)
             if length is None or length <= 0 or length >= it.cchTextMax - 1:
                 return ""                 # empty or truncated labels cannot identify a backup
             buf = ctypes.create_unicode_buffer(260)
@@ -909,6 +961,7 @@ BACKUP_OK = False
 # so the next launch knows not to photograph the mess.
 LAYOUT_DIRTY = False
 BACKUP_KEEP = 3          # older launch snapshots kept in the file, for hand recovery
+_BACKUP_CACHE = None    # parsed data/name counts, validated against current bytes
 
 
 def _valid_snapshot(icons):
@@ -944,16 +997,63 @@ def _read_backup():
     try:
         with open(BACKUP_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if (isinstance(data, dict) and _valid_snapshot(data.get("icons"))
-                and isinstance(data.get("dirty", False), bool)):
+        if _valid_backup(data):
             return data
     except Exception:
         pass
     return None
 
 
+def _valid_backup(data):
+    return (isinstance(data, dict) and _valid_snapshot(data.get("icons"))
+            and isinstance(data.get("dirty", False), bool))
+
+
 def _write_backup(data):
+    global _BACKUP_CACHE
+    _BACKUP_CACHE = None
     atomic_write_json(BACKUP_PATH, data)
+
+
+def _backup_stamp():
+    """Detect deletion, edits and atomic replacement even at the same path."""
+    stat = os.stat(BACKUP_PATH)
+    return (os.path.abspath(BACKUP_PATH), stat.st_dev, stat.st_ino,
+            stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+def _backup_protection():
+    """Reuse parsed recovery data only when its readable bytes are unchanged.
+
+    Icon identity is deliberately not cached: each move still asks Explorer for
+    the current label and verifies uniqueness, including same-count renames.
+    Comparing bytes also catches in-place corruption with restored timestamps;
+    merely trusting file metadata could let an unrecoverable icon move through.
+    """
+    global _BACKUP_CACHE
+    try:
+        stamp = _backup_stamp()
+        with open(BACKUP_PATH, "rb") as source:
+            contents = source.read()
+        if _backup_stamp() != stamp:
+            _BACKUP_CACHE = None
+            return None
+        if (_BACKUP_CACHE is not None and _BACKUP_CACHE[0] == stamp
+                and _BACKUP_CACHE[1] == contents):
+            return _BACKUP_CACHE[2]
+        data = json.loads(contents.decode("utf-8"))
+        if not _valid_backup(data):
+            _BACKUP_CACHE = None
+            return None
+        counts = {}
+        for name, _x, _y in data["icons"]:
+            counts[name] = counts.get(name, 0) + 1
+        protection = (data, counts)
+        _BACKUP_CACHE = (stamp, contents, protection)
+        return protection
+    except Exception:
+        _BACKUP_CACHE = None
+        return None
 
 
 def backup_layout():
@@ -1016,16 +1116,19 @@ def backup_layout():
     return "saved"
 
 
-def mark_layout_dirty():
+def mark_layout_dirty(protection=None):
     """Persist protection before the first move; False forbids that move."""
     global LAYOUT_DIRTY, BACKUP_OK
-    if LAYOUT_DIRTY:
-        return BACKUP_OK
-    data = _read_backup()
-    if not data:
+    protection = protection if protection is not None else _backup_protection()
+    if protection is None:
         BACKUP_OK = False
         return False
+    data = protection[0]
     if not data.get("dirty"):
+        # Copy before changing a cached record: a failed write must not leave
+        # an in-memory dirty flag that was never persisted. External replacement
+        # by a clean backup also requires durable protection again.
+        data = dict(data)
         data["dirty"] = True
         try:
             _write_backup(data)
@@ -1867,6 +1970,111 @@ def scan_desktop(own_hwnd, want_icons):
     return icons, windows
 
 
+class _CollisionBounds(list):
+    """Terrain-owned rows with a lazily rebuilt, order-preserving broad phase.
+
+    Desktop scans replace the rows. A tracked list also invalidates the index
+    when a fixture or caller edits one in place; geometry changes replace its
+    immutable bounds tuple, while target kind/key remain stable identities.
+    """
+    CELL = 128.
+
+    def __init__(self, rows=()):
+        super().__init__(rows)
+        self._grid = None
+
+    def _change(self, method, *args, **kwargs):
+        self._grid = None
+        self._boxes, self._wide, self._identities = (), (), {}
+        return method(self, *args, **kwargs)
+
+    def __setitem__(self, key, value):
+        return self._change(list.__setitem__, key, value)
+
+    def __delitem__(self, key):
+        return self._change(list.__delitem__, key)
+
+    def append(self, value):
+        return self._change(list.append, value)
+
+    def extend(self, values):
+        return self._change(list.extend, values)
+
+    def insert(self, index, value):
+        return self._change(list.insert, index, value)
+
+    def pop(self, index=-1):
+        return self._change(list.pop, index)
+
+    def remove(self, value):
+        return self._change(list.remove, value)
+
+    def clear(self):
+        return self._change(list.clear)
+
+    def reverse(self):
+        return self._change(list.reverse)
+
+    def sort(self, *args, **kwargs):
+        return self._change(list.sort, *args, **kwargs)
+
+    def __iadd__(self, values):
+        self._change(list.__iadd__, values)
+        return self
+
+    def __imul__(self, count):
+        self._change(list.__imul__, count)
+        return self
+
+    def _build(self):
+        grid, wide, boxes, identities = {}, [], [], {}
+        for index, row in enumerate(self):
+            cx, cy, hw, hh, target = row
+            box = (cx - hw, cy - hh, cx + hw, cy + hh)
+            boxes.append(box)
+            identities.setdefault((target["kind"], target["key"]), []).append(row)
+            if not all(math.isfinite(value) for value in box):
+                wide.append(index)
+                continue
+            left, top, right, bottom = (math.floor(value / self.CELL) for value in box)
+            # A huge window must not allocate an unbounded number of grid cells.
+            if (right - left + 1) * (bottom - top + 1) > 64:
+                wide.append(index)
+                continue
+            for x in range(left, right + 1):
+                for y in range(top, bottom + 1):
+                    grid.setdefault((x, y), []).append(index)
+        self._grid, self._wide = grid, wide
+        self._boxes, self._identities = boxes, identities
+
+    def candidates(self, x0, y0, x1, y1, radius=0., target=None):
+        if not self:
+            return []
+        if self._grid is None:
+            self._build()
+        if target is not None:
+            # Piercing rounds only collide with their intended desktop target.
+            # Keep duplicate identities in original order for exact tie behavior.
+            return self._identities.get(target, [])
+        left, right = min(x0, x1) - radius, max(x0, x1) + radius
+        top, bottom = min(y0, y1) - radius, max(y0, y1) + radius
+        if not all(math.isfinite(value) for value in (left, top, right, bottom)):
+            return self
+        xl, yt, xr, yb = (math.floor(value / self.CELL) for value in (left, top, right, bottom))
+        if (xr - xl + 1) * (yb - yt + 1) > 256:
+            indices = range(len(self))  # long sweeps remain bounded by terrain size
+        else:
+            found = set(self._wide)
+            for x in range(xl, xr + 1):
+                for y in range(yt, yb + 1):
+                    found.update(self._grid.get((x, y), ()))
+            indices = sorted(found)  # preserve the narrow phase's existing tie order
+        boxes = self._boxes
+        return [self[i] for i in indices
+                if not (boxes[i][2] < left or boxes[i][0] > right
+                        or boxes[i][3] < top or boxes[i][1] > bottom)]
+
+
 class Terrain:
     def __init__(self):
         self.icons = []       # (name, l, t, r, b, index)
@@ -1883,6 +2091,18 @@ class Terrain:
         self.scanner = Scanner()
         self.fast_tracking = True
         self._tracked = {}     # occupied hwnd -> (last visible rect, read time)
+
+    @property
+    def bounds(self):
+        return self._bounds
+
+    @bounds.setter
+    def bounds(self, rows):
+        self._bounds = rows if isinstance(rows, _CollisionBounds) else _CollisionBounds(rows)
+
+    def projectile_candidates(self, x0, y0, x1, y1, radius=0., target=None):
+        """Conservative swept-box candidates, in the original terrain order."""
+        return self.bounds.candidates(x0, y0, x1, y1, radius, target)
 
     def refresh(self, own_hwnd=0, want_icons=True):
         """Look at the desktop again. Synchronous until `threaded` is set --
@@ -1975,8 +2195,7 @@ class Terrain:
             pl.append((l + 6, r - 6, t, "window", hwnd))
         self._targets = tg
         self.platforms = pl
-        # Flat tuples: the projectile loop walks these on every single frame,
-        # and a tuple unpack beats four dict lookups per test.
+        # Replacing these flat tuples invalidates the projectile broad phase.
         self.bounds = [(t["cx"], t["cy"], t["w"] / 2, max(t["h"], 26) / 2, t)
                        for t in tg]
 
@@ -3018,7 +3237,10 @@ class App:
         x, y = int(x), int(y)       # the real list-view primitive stores integers
         batch = getattr(self, "_icon_batch", None)
         if batch is None:
-            return SHELL.set_item_pos(index, x, y)
+            # A click or tray action can drop an icon outside the simulation
+            # callback. Those writes need the same responsiveness as frame work.
+            with getattr(SHELL, "frame_budget", nullcontext)():
+                return SHELL.set_item_pos(index, x, y)
         if not self.can_move_icons():
             return False
         batch[index] = (x, y)
@@ -6188,9 +6410,9 @@ class App:
             first = 1.0
             tgt = s.get("tgt")
             if not s.get("pierce") or tgt is not None:
-                for cx, cy, hw, hh, t in bounds:
-                    if s.get("pierce") and (t["kind"], t["key"]) != tgt:
-                        continue
+                candidates = self.terrain.projectile_candidates(
+                    x0, y0, sx, sy, target=tgt if s.get("pierce") else None)
+                for cx, cy, hw, hh, t in candidates:
                     at = self.segment_box(x0, y0, sx, sy, cx - hw, cy - hh,
                                           cx + hw, cy + hh)
                     if at is not None and at <= first:
@@ -7539,7 +7761,7 @@ class App:
         label = tk.Label(win, bg="#171B2C", fg="#E6ECFF", justify="left",
                          font=("Consolas", 10), padx=22, pady=18)
         label.pack(fill="both", expand=True)
-        tk.Label(win, text="Draw time includes submission and presentation; GPU completion is not timed.",
+        tk.Label(win, text="Drawing includes Tk painting and CPU presentation work. OS/GPU completion is not timed.",
                  bg="#171B2C", fg="#8FA0CC", font=("Segoe UI", 8),
                  wraplength=460, padx=16, pady=10).pack()
 
@@ -7555,7 +7777,8 @@ class App:
                 "Actual FPS  {fps:.1f}  (target {target:.0f})\n"
                 "Simulation  {update_ms:.2f} ms/frame\n"
                 "Drawing     {draw_ms:.2f} ms/frame\n"
-                "95% cost    {p95_ms:.2f} ms/frame\n"
+                "95% work    {p95_ms:.2f} ms (simulation + drawing)\n"
+                "95% gap     {frame_p95_ms:.2f} ms between frames\n"
                 "Sim steps   {steps:.2f}/frame at 60 Hz\n"
                 "Dropped     {dropped:.3f} seconds total\n\n"
                 "FX detail   {detail:.0%}\nParticles   {particles}\n"
@@ -7622,18 +7845,26 @@ class App:
                         if available > MAX_CATCHUP_STEPS:
                             dropped = (available - MAX_CATCHUP_STEPS) * SIM_STEP
                             accumulator -= dropped
-                        self.begin_frame()
-                        started = time.perf_counter()
-                        try:
-                            for _ in range(min(available, MAX_CATCHUP_STEPS)):
-                                self.update(SIM_STEP)
-                                accumulator = max(0.0, accumulator - SIM_STEP)
-                                steps += 1
-                        finally:
-                            self.flush_frame()
-                            update_ms = (time.perf_counter() - started) * 1000
+                        # Shell operations share one small allowance per frame;
+                        # a busy Explorer must not hold up animation or input.
+                        with getattr(SHELL, "frame_budget", nullcontext)():
+                            self.begin_frame()
+                            started = time.perf_counter()
+                            try:
+                                for _ in range(min(available, MAX_CATCHUP_STEPS)):
+                                    self.update(SIM_STEP)
+                                    accumulator = max(0.0, accumulator - SIM_STEP)
+                                    steps += 1
+                            finally:
+                                self.flush_frame()
+                                update_ms = (time.perf_counter() - started) * 1000
                         started = time.perf_counter()
                         self.draw()
+                        if IS_WINDOWS and self.renderer_mode == "tk":
+                            # Tk otherwise paints after this callback, outside
+                            # the drawing measurement. Flush only idle work;
+                            # processing input/timers here would re-enter tick.
+                            self.root.update_idletasks()
                         draw_ms = (time.perf_counter() - started) * 1000
                     elif self._pool:
                         self.clear_canvas()

@@ -103,16 +103,13 @@ for scenes in (True, False):
             if scores and worst > -15:
                 bad.append("%s: worst pair only %.1f, so no rivalry can form "
                            "(_advance wants < -15)" % (label, worst))
-            # Ordinary play must settle well clear of the hit channel's bound,
-            # not sit on it. With the interval gate dead, every charge lands and
-            # the pair pins at the bound instead -- which the floor test above
-            # cannot see, because the bound is not the -100 clamp. A literal, so
-            # that moving the bound does not quietly move the goalposts: healthy
-            # runs measured -26.8 to -43.5 across these eight, a dead gate -70.0.
-            if scores and worst < -58:
-                bad.append("%s: worst pair %.1f is sitting on the hit bound; "
-                           "the interval gate is not limiting charges"
-                           % (label, worst))
+            # Nothing here asserts on a magnitude between those two bounds.
+            # `App` reads the real screen -- harness does not pin it -- so how
+            # often anyone meets anyone else moves with the desktop size: seed
+            # 31 scenes-off measured -41.6 here and -62.8 on a 1280x800 CI
+            # runner, against -70.0 for a dead interval gate. A threshold placed
+            # between those overlaps the healthy spread. The gate is checked
+            # directly instead, in section 6.
         finally:
             harness.teardown(gm, app)
 
@@ -223,6 +220,28 @@ try:
         bad.append("5 hits spread over 100s (%.1f) did not out-grudge 40 hits "
                    "crammed into 4s (%.1f): the interval is not gating"
                    % (spread, crammed))
+
+    # 6. the gate survives update()'s own bookkeeping with scenes off. That
+    # path calls clear() every frame, and keeping the rate-limit state in
+    # clear() reset it before it could expire -- handing the per-hit ratchet
+    # back to the one configuration with no positive bond source at all.
+    # Driven directly rather than inferred from a six-minute run, so the
+    # result does not move with the desktop size.
+    graph.clear()
+    social.alliances.clear()
+    social._hit_bond.clear()
+    gm.CFG["group_scenes"] = False
+    social.time += 1000.0
+    for _ in range(40):
+        social.update(.1)                 # runs the clear()-every-frame branch
+        social.on_hit(a, b, 20)
+    gated = graph.get(key, 0.0)
+    gm.CFG["group_scenes"] = True
+    print("40 hits over 4s with group scenes OFF: %.1f" % gated)
+    if gated < one_step - 0.01:
+        bad.append("with group scenes off, 40 hits in 4s moved the bond %.1f "
+                   "against %.1f for a single hit: update()'s clear() is wiping "
+                   "the rate limit" % (gated, one_step))
 
     print()
     if bad:

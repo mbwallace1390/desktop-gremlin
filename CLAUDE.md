@@ -363,6 +363,17 @@ behind `_available()`, which needs idle/walk/taunt. Do not write a check that
 asserts one fired — an earlier draft did, and it passed on seed 31 and failed on
 2, 7 and 99. Say "the lockout is gone", not "friendships now happen".
 
+**`harness` does not pin the screen, so anything the sim does over minutes is
+machine-dependent.** `App` reads the real desktop, and how often anyone meets
+anyone else moves with its size. Seed 31 scenes-off measured -41.6 at this desk
+and -62.8 on a 1280x800 CI runner — the same seed, the same code. A threshold
+placed between "healthy" and "broken" therefore passes here and fails in CI,
+which is exactly how the first v3.2.2 build died. Assert the mechanism directly
+on a driven sequence instead: `test_social_decay.py` section 6 fires 40 hits
+through `update()` and reads back one grudge step, and that number is the same
+everywhere. `bbf85b8` made the same correction to `test_crowd` and `test_muzzle`
+by widening margins rather than tightening them.
+
 **`GREMLIN_SRC` only swaps `desktop_gremlin.py`.** `harness.load` builds its
 module from that one path; `gremlin_social.py`, `gremlin_motion.py`,
 `gremlin_arsenal.py`, `gremlin_physics.py` and `gremlin_ragdoll.py` are imported

@@ -5,6 +5,20 @@ Windows supports Explorer icons and open windows. Linux X11 supports open
 windows and the desktop floor, including climbing, dragging gremlins and
 optional window nudges with restoration.
 
+**3.2.2 fixes:** grudges now wear off. Relationship scores only ever fell —
+every landed hit deepened one, nothing ever pulled it back, and the score is
+saved, so within about ten minutes of play every pair sat at the floor and
+stayed there for good. Rescues, alliances and the quiet group scenes all need a
+neutral or positive score, so once that happened they were locked out
+permanently, and only **Make them forget everything about me** cleared it.
+A fight now deepens a grudge once every few seconds instead of once per blow,
+fighting alone can no longer drive a pair past a fixed rivalry bound, and every
+score fades back toward neutral as a run goes on — grudges quickly, friendships
+slowly. Rivalries still form, and they can now be got over. Existing saved
+grudges thaw on their own over the first few minutes of a run. Group scenes
+remain uncommon by design, because they need the cast idle; this removes the
+lockout rather than making them frequent.
+
 **3.2.1 performance:** less repeated crate geometry and collision work, faster
 icon-recovery lookups, bounded waits for busy Windows Explorer, and clearer
 performance readings. Controlled hidden-window Windows measurements found
@@ -54,7 +68,7 @@ install no Python or pip packages. Linux needs an x64 glibc desktop compatible
 with Ubuntu 22.04 or newer and an X11 session.
 
 1. Open [GitHub Releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
-2. Under the release's **Assets**, download **DesktopGremlin-3.2.1-Windows-x64.zip**.
+2. Under the release's **Assets**, download **DesktopGremlin-3.2.2-Windows-x64.zip**.
 3. Right-click the ZIP, choose **Extract All**, then open the extracted folder.
 4. Double-click **DesktopGremlin.exe**. Keep its `_internal` folder beside it.
 
@@ -62,7 +76,7 @@ Choose the executable archive under the release's Assets. GitHub's **Source code
 downloads are for developers.
 See [the download guide](USER_DOWNLOAD_GUIDE.md) for updating and uninstalling.
 
-On Linux, download **DesktopGremlin-3.2.1-Linux-x64.tar.gz**, extract it, and
+On Linux, download **DesktopGremlin-3.2.2-Linux-x64.tar.gz**, extract it, and
 open **DesktopGremlin** inside the extracted folder. Keep `_internal` beside
 it. A small control window provides Settings, Performance, Pause, Bring them
 to my cursor, Put my windows back, and Quit. Right-click a gremlin to show it.
@@ -465,7 +479,7 @@ screenshot.
 python tests\run_all.py
 ```
 
-50 checks on Windows; the Linux runner selects shared and Linux checks.
+51 checks on Windows; the Linux runner selects shared and Linux checks.
 Linux acceptance requires an isolated Xvfb session as documented in the Linux
 build guide. Frozen Linux acceptance also proves real input delivery and exit
 using a separate receiver process.

@@ -13,7 +13,9 @@ class PerformanceMonitor:
 
     def record(self, interval, update_ms, draw_ms, steps, dropped, period,
                automatic=True, active=True):
-        values = (interval, update_ms, draw_ms, dropped, period)
+        # steps is in here too: it is averaged straight into snapshot(), so a
+        # non-finite one would poison the panel without failing anything else.
+        values = (interval, update_ms, draw_ms, dropped, period, steps)
         if not all(math.isfinite(v) and v >= 0 for v in values) or period <= 0:
             return
         self.samples.append((interval, update_ms, draw_ms, steps))

@@ -26,6 +26,22 @@ def preset(name):
     return PRESETS.get(name, PRESETS["normal"])
 
 
+def squash_axes(squash):
+    """Landing squash as (x, y) scale factors, clamped, in one shared place.
+
+    `App.frame` draws the body with these and `gremlin_ragdoll._axes` solves
+    passive limbs with them, so the two must agree exactly or limbs detach from
+    the torso with every check still green -- the same drift the muzzles once
+    paid for. The clamp matters because `_axes` divides by the y factor, which
+    reaches zero at a squash of 3.57; nothing assigns beyond the 1.3 cartoon
+    flatten today, but the division is here rather than at the assignment sites.
+    """
+    if not math.isfinite(squash):
+        squash = 0.0
+    squash = min(2.0, max(-2.0, squash))
+    return 1 + squash * .22, 1 - squash * .28
+
+
 def mass(f):
     """Relative mass grows with body area; optional per-body override is bounded."""
     value = getattr(f, "physics_mass", (f.sc / .68) ** 2)

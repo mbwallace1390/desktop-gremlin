@@ -2,7 +2,7 @@ Desktop Gremlin for Windows
 ==========================
 
 1. Open [Desktop Gremlin releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
-2. Under Assets, download DesktopGremlin-3.2.1-Windows-x64.zip.
+2. Under Assets, download DesktopGremlin-3.2.2-Windows-x64.zip.
 3. Right-click the ZIP and choose Extract All.
 4. Open the extracted DesktopGremlin folder and double-click DesktopGremlin.exe.
 
@@ -12,6 +12,15 @@ DesktopGremlin.exe. The GitHub "Source code" downloads are for developers.
 The gremlins appear on your desktop. Open the system tray arrow near the clock
 and right-click the Desktop Gremlin icon for Settings, Pause and Quit. You can
 also quit with Ctrl+Alt+Shift+Q. Normal use has no command window.
+
+Version 3.2.2 fixes grudges that never wore off. Relationship scores only ever
+fell, so within about ten minutes every pair reached the minimum and stayed
+there, locking out rescues, alliances and the quiet group scenes for good. A
+fight now deepens a grudge once every few seconds instead of once per blow,
+fighting alone can no longer pass a fixed rivalry bound, and scores fade back
+toward neutral as a run goes on. Grudges saved by an earlier version thaw on
+their own over the first few minutes; nothing needs deleting. Group scenes are
+still uncommon -- they need the cast idle -- but they are no longer locked out.
 
 Version 3.2.1 reduces repeated physics and collision calculations, limits waits
 for busy Windows Explorer, and improves the Performance panel's measurements.

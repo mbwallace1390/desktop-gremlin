@@ -16,7 +16,9 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          # Match the interpreter the downloads are built with, so the gate on
+          # every push exercises the same Python that ships.
+          python-version: "3.14"
       - name: Install pywin32
         run: python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Run every check

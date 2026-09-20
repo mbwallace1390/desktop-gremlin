@@ -24,7 +24,7 @@ Quit hides the overlay first and must finish teardown even if cleanup fails.
 python tests\run_all.py
 ```
 
-50 checks on Windows; `tests/run_all.py` selects the shared and Linux subset
+51 checks on Windows; `tests/run_all.py` selects the shared and Linux subset
 on Linux. Linux tests require isolated Xvfb and `GREMLIN_ISOLATED_X11=1`.
 Production never synthesizes input. `gremlin_x11_probe.py` is an opt-in source
 and frozen acceptance helper that uses a separate receiver process and proves
@@ -323,10 +323,52 @@ particles and more fighters are the two things you cannot buy.
 ## Design decisions worth not relitigating
 
 **Memory holds counters, never a log.** `gremlin_memory.json` keeps fight and
-interaction counts plus the icon names they pick on most. Nothing about which
+interaction counts, the icon names they pick on most, and the 45 pair scores in
+`relationships` — the largest thing in the file, and the one worth naming here
+because it is the only entry that is not a plain tally. Nothing about which
 applications or windows you use is written to disk — the context in `Watcher`
 lives in RAM and dies with the process. Settings has a "forget everything"
 button. Keep it that way.
+
+**A saved score with no decay is a ratchet.** `relationships` used to only ever
+fall: `on_hit` was the only bond source with no scene gate, charging once per
+landed hit, and nothing pulled anything back toward zero. Every pair hit the
+-100 floor within three minutes, which kept everyone in `fight`, which stopped
+`_available()` letting scenes start, which stopped the positive terms firing.
+Measured before the fix: 1171 negative deltas against 2 positive in twenty
+simulated minutes.
+
+Three things hold it now, and the order matters. `HIT_BOND_INTERVAL` makes one
+fight one grudge instead of forty. `HIT_BOND_FLOOR` stops the hit channel by
+construction, which is the part that does not depend on tuning: the first
+attempt relied on decay to counterbalance the hits, so the equilibrium moved
+with how many pairs the hits were spread across — fine at a crowd of six, still
+a slow ratchet at a crowd of two. `GRUDGE_HALF_LIFE` and `BOND_HALF_LIFE` are
+deliberately far apart, because decaying both channels at one rate expired every
+friendship below the `affinity >= 15` ally gate about two minutes after the
+scene that earned it.
+
+**Rate-limit state is not scene state.** `update()` calls `clear()` *every
+frame* when `group_scenes` is off. The first version of this fix kept
+`_hit_bond` in `clear()`, so that configuration reset the gate before it could
+expire and got the whole per-hit ratchet back — with no positive bond source at
+all to offset it. Measured at 119 hits: 20 grudge steps with scenes on, 119 with
+them off. Nothing in the suite covered it, because `harness.QUIET` sets
+`group_scenes: False` for every legacy check and the new check had opted into
+`True`. It now sweeps both, over four seeds each.
+
+**Positive bonds are rare, and that is not this bug.** Even fixed, a six-minute
+mischief run at crowd six records 0–1 positive bond events: every one is gated
+behind `_available()`, which needs idle/walk/taunt. Do not write a check that
+asserts one fired — an earlier draft did, and it passed on seed 31 and failed on
+2, 7 and 99. Say "the lockout is gone", not "friendships now happen".
+
+**`GREMLIN_SRC` only swaps `desktop_gremlin.py`.** `harness.load` builds its
+module from that one path; `gremlin_social.py`, `gremlin_motion.py`,
+`gremlin_arsenal.py`, `gremlin_physics.py` and `gremlin_ragdoll.py` are imported
+from the repo every time. To prove a check catches a bug in one of those, copy
+the whole tree and run the check from the copy — the recipe above is not enough,
+and most new behaviour now lives in those five files.
 
 **The screen wraps sideways.** Off one edge and back on the other, keeping
 height and speed. Two things send a fighter round: getting `WRAP` past the edge,

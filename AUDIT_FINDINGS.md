@@ -1,5 +1,10 @@
 # Desktop Gremlin audit and repair handoff
 
+> **Historical.** All fifteen findings below were fixed and shipped. Kept for
+> the reasoning, not as a to-do list. Superseded by `AUDIT_2026-09-12.md` and
+> then by the 2026-09-20 pass, whose one behavioural finding is recorded in
+> CLAUDE.md under "A saved score with no decay is a ratchet".
+
 Audit date: 2026-09-05. The initial audit was read-only. The user has now
 authorized Codex to implement all findings and the related test improvements.
 Codex is handling the fixes in this workspace; this document is a handoff for

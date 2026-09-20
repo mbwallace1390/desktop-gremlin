@@ -68,9 +68,11 @@ whichever runs out first. A rescue preserves an existing shield.
 **Friends, rivals and things to watch for**
 
 Shared activities and rescues improve relationships; hits and betrayals create
-grudges. Relationships influence opponent choice. Pair scores persist between
-runs under stable character identities, even when nicknames change or a
-character temporarily leaves the cast.
+grudges. A fight deepens a grudge once every few seconds rather than once per
+landed blow, and every score fades back toward neutral as a run goes on, so a
+rivalry is something they can get over. Relationships influence opponent
+choice. Pair scores persist between runs under stable character identities,
+even when nicknames change or a character temporarily leaves the cast.
 
 | Activity | What makes it observable |
 |---|---|

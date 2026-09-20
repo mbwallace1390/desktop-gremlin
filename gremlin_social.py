@@ -20,6 +20,34 @@ MIN_ACTORS = {"alliance": 3, "rescue": 2, "hat_heist": 3,
               "surrender": 2, "spectators": 3, "court": 3,
               "cards": 2, "football": 2, "juggling": 1,
               "blanket_nap": 1, "coffee": 1, "inspect": 1}
+# A landed hit is a grudge, not an integral. `on_hit` is the only bond source
+# with no scene gate behind it, so without an interval it charged once per hit
+# -- about once a second in a brawl -- and floored every pair within minutes.
+# Once floored, nobody was ever idle enough for `_available()` to start a scene,
+# so the positive terms stopped firing and the ratchet sustained itself.
+HIT_BOND_INTERVAL = 6.0
+# Ordinary fighting makes rivals, never permanent enemies, and it says so by
+# construction rather than by tuning: the hit channel simply stops here. Relying
+# on decay to counterbalance it instead meant the equilibrium depended on how
+# many pairs the hits were spread across -- fine at a crowd of six, still a slow
+# ratchet to the floor at a crowd of two. Betrayal and the scene penalties are
+# rare and scene-gated, and may still take a pair below this.
+HIT_BOND_FLOOR = -70.0
+# Scores fade on run time. Grudges fade far faster than friendships: they are
+# generated continuously by the thing the cast does most, while a friendship
+# needs a whole scene to complete. Decaying both at one rate made every
+# friendship expire below the `affinity >= 15` ally gate about two minutes after
+# the scene that earned it.
+GRUDGE_HALF_LIFE = 420.0
+BOND_HALF_LIFE = 1800.0
+BOND_EPSILON = 0.5            # below this a pair is forgotten, not stored
+# Decay accumulates this much before it is worth a save. It is CUMULATIVE, not
+# per pass: one pass can only ever move the largest possible score by 0.21
+# (|100| at the 420s half-life over the 1.25s of run time update() can hand it),
+# so comparing a single tick against any threshold above that never fires at
+# all -- decay then lives in memory only and a quiet desktop saves a grudge it
+# has already forgotten.
+BOND_STEP = 1.0
 FREE_STATES = frozenset(("idle", "walk", "taunt"))
 RESCUABLE = frozenset(("ko", "fall", "thrown", "ledge", "cling", "foam",
                       "bubble", "frozen", "stuck"))
@@ -58,6 +86,9 @@ class SocialDirector:
         self.memory_getter, self.mark_dirty = memory_getter, mark_dirty
         self.scenes, self.alliances, self.stickers = [], [], []
         self.owned, self.cooldowns = {}, {}
+        self._hit_bond = {}       # pair key -> when a hit last deepened it
+        self._decay_due = 0.0     # decay runs about once a second, not per frame
+        self._decay_drift = 0.0   # fade not yet persisted, in score units
         self.time, self.next_scene, self.window_cooldown = 0.0, 8.0, 0.0
         self.next_rescue = 0.0
         self.last_hit = None
@@ -116,11 +147,54 @@ class SocialDirector:
             relations[key] = score
             self.mark_dirty()
 
+    def _decay(self, elapsed):
+        """Pull every saved score toward zero, so grudges and friendships fade.
+
+        This runs before the group_scenes gate on purpose: hits still lower
+        bonds with scenes switched off, and that direction has no counterpart
+        at all there, so skipping decay would leave the worst ratchet of the lot.
+
+        Only a drift worth persisting marks memory dirty. Marking on every pass
+        instead turned an event-driven flag into a permanently set one, and
+        `save_memory` then rewrote the file every sixty seconds for the life of
+        the process -- on a desktop where nothing had happened.
+        """
+        relations = self._relations()
+        if not relations:
+            return
+        elapsed = _clamp(_number(elapsed), 0, 60)
+        fade = .5 ** (elapsed / GRUDGE_HALF_LIFE)
+        warm = .5 ** (elapsed / BOND_HALF_LIFE)
+        changed, drift = False, 0.0
+        for key in list(relations):
+            was = _number(relations.get(key))
+            score = was * (fade if was < 0 else warm)
+            if abs(score) < BOND_EPSILON:
+                del relations[key]        # forgotten entirely, not stored as ~0
+                changed = True
+            else:
+                relations[key] = score
+                drift = max(drift, abs(score - was))
+        self._decay_drift += drift
+        if changed or self._decay_drift >= BOND_STEP:
+            self._decay_drift = 0.0
+            self.mark_dirty()
+
     def on_hit(self, att, vic, dmg):
         damage = _number(dmg)
         if att is vic or damage <= 0 or self.cfg.get("play_mode") == "peaceful":
             return
-        self._bond(att, vic, -min(12.0, 1.0 + damage * .22))
+        # One fight is one grudge per interval, and fighting alone stops at
+        # HIT_BOND_FLOOR. Charging per landed hit with no bound drove every pair
+        # to the -100 floor inside three minutes; see HIT_BOND_INTERVAL.
+        key = self._key(att, vic)
+        if key is not None and self.time - self._hit_bond.get(key, -1e9) >= HIT_BOND_INTERVAL:
+            self._hit_bond[key] = self.time
+            # The stored score, not affinity(): that reports 100 for a live
+            # pact, which would hand a fighting pair the full step every time.
+            room = _number(self._relations().get(key)) - HIT_BOND_FLOOR
+            if room > 0:
+                self._bond(att, vic, -min(6.0, .8 + damage * .15, room))
         self.last_hit = (att, vic, self.time)
         for pact in list(self.alliances):
             if att in pact["members"] and vic in pact["members"]:
@@ -421,6 +495,10 @@ class SocialDirector:
     def update(self, dt):
         dt = _clamp(_number(dt), 0, .25)
         self.time += dt
+        self._decay_due += dt
+        if self._decay_due >= 1.0:
+            self._decay(self._decay_due)
+            self._decay_due = 0.0
         if not self.cfg.get("group_scenes", True):
             self.clear()
             return
@@ -526,6 +604,13 @@ class SocialDirector:
             self.alliances.clear()
             self.stickers.clear()
             self.cooldowns.clear()
+            # _hit_bond deliberately survives: it is rate-limit state keyed by
+            # character pair, not scene state keyed by actor. update() calls
+            # clear() every frame when group_scenes is off, so wiping it here
+            # reset the gate before it could ever expire and handed that
+            # configuration the original per-hit ratchet back, with no positive
+            # bond source at all to offset it. Measured at 119 hits: 20 grudge
+            # steps with scenes on, 119 with them off.
             self.last_hit = None
             self.next_scene = self.time + 8
 

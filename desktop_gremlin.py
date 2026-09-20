@@ -61,7 +61,7 @@ if IS_WINDOWS:
 elif sys.platform != "linux":
     raise RuntimeError("Desktop Gremlin supports Windows and Linux X11.")
 
-VERSION = "3.2.1"
+VERSION = "3.2.2"
 DEBUG = "--debug" in sys.argv
 HERE, DATA_DIR = runtime_paths(__file__)
 SETTINGS_PATH = os.path.join(DATA_DIR, "gremlin_settings.json")
@@ -539,16 +539,18 @@ def set_run_at_startup(on):
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                              r"Software\Microsoft\Windows\CurrentVersion\Run",
                              0, winreg.KEY_SET_VALUE)
-        name = "DesktopGremlin"
-        if on:
-            cmd = startup_command(os.path.join(HERE, os.path.basename(__file__)), pythonw_path())
-            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, cmd)
-        else:
-            try:
-                winreg.DeleteValue(key, name)
-            except FileNotFoundError:
-                pass
-        winreg.CloseKey(key)
+        try:
+            name = "DesktopGremlin"
+            if on:
+                cmd = startup_command(os.path.join(HERE, os.path.basename(__file__)), pythonw_path())
+                winreg.SetValueEx(key, name, 0, winreg.REG_SZ, cmd)
+            else:
+                try:
+                    winreg.DeleteValue(key, name)
+                except FileNotFoundError:
+                    pass
+        finally:
+            winreg.CloseKey(key)   # a failed write used to leak the handle
         return True
     except Exception as exc:
         print("startup entry failed:", exc)
@@ -3067,9 +3069,6 @@ class Fighter:
 
     def K(self):
         return self.sc / 1.75
-
-    def head_y(self):
-        return self.y - 66 * self.sc
 
 
 def plan_weapon(per, rage=False):
@@ -7003,8 +7002,9 @@ class App:
         landing squash and the tumble. One function for the drawing and for
         muzzle(), so a round leaves the weapon as it is actually drawn."""
         S = f.sc
-        sqx = 1 + f.squash * .22
-        sqy = 1 - f.squash * .28
+        # Shared with gremlin_ragdoll._axes, which divides by these: the passive
+        # limbs have to solve in the same basis the body is drawn in.
+        sqx, sqy = PHYSICS.squash_axes(f.squash)
         fx, fy = f.face * S * sqx, S * sqy
         ca, sa = math.cos(f.tumble), math.sin(f.tumble)
 
@@ -8011,7 +8011,17 @@ if __name__ == "__main__":
             from gremlin_x11_probe import receiver_main
             sys.exit(receiver_main(sys.argv[2]) if len(sys.argv) == 3 else 2)
         if any(arg != "--debug" for arg in sys.argv[1:]):
-            print("Unknown option. Use --debug for diagnostics.", file=sys.stderr)
+            message = "Unknown option. Use --debug for diagnostics."
+            if sys.stderr is not None:
+                print(message, file=sys.stderr)
+            else:
+                # run_gremlin.bat uses pythonw for every run that is not
+                # --debug. There sys.stderr is None, so the print above is a
+                # silent no-op and start_log() has not run yet: a typo'd flag
+                # used to exit 2 with nothing on screen and nothing in the log.
+                # A box only in that case -- a console run must not block on a
+                # modal dialog nobody asked for.
+                fatal(message, icon=0x30)
             sys.exit(2)
         main()
     except Exception:

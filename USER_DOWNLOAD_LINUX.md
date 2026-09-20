@@ -2,7 +2,7 @@ Desktop Gremlin for Linux
 =========================
 
 1. Open [Desktop Gremlin releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
-2. Under Assets, download DesktopGremlin-3.2.1-Linux-x64.tar.gz.
+2. Under Assets, download DesktopGremlin-3.2.2-Linux-x64.tar.gz.
 3. Right-click the archive and choose Extract Here, then open its DesktopGremlin folder.
 4. Double-click DesktopGremlin. If your file manager asks, choose Run.
 
@@ -24,6 +24,15 @@ Use the small Desktop Gremlin control window for Settings, Pause, Bring them to
 my cursor, Put my windows back and Quit. Right-clicking a gremlin opens the same
 menu. Ctrl+Alt+Shift+Q also quits when available; the control window shows its
 availability. No terminal is needed during normal use.
+
+Version 3.2.2 fixes grudges that never wore off. Relationship scores only ever
+fell, so within about ten minutes every pair reached the minimum and stayed
+there, locking out rescues, alliances and the quiet group scenes for good. A
+fight now deepens a grudge once every few seconds instead of once per blow,
+fighting alone can no longer pass a fixed rivalry bound, and scores fade back
+toward neutral as a run goes on. Grudges saved by an earlier version thaw on
+their own over the first few minutes; nothing needs deleting. Group scenes are
+still uncommon -- they need the cast idle -- but they are no longer locked out.
 
 Version 3.2.1 reduces repeated physics and collision calculations and improves
 the Performance panel's measurements. Your existing settings and physics choices

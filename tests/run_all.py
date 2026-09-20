@@ -18,6 +18,7 @@ back in the copy, and point the check at it:
 A check that passes against the broken copy is testing nothing.
 """
 import os
+import re
 import subprocess
 import sys
 import time
@@ -46,6 +47,7 @@ CHECKS = [
     ("expansion_arsenal", "test_expansion_arsenal.py", "seven weapons and timed effects"),
     ("expansion_motion", "test_expansion_motion.py", "parkour, planes, ropes and toys"),
     ("expansion_social", "test_expansion_social.py", "relationships and coordinated scenes"),
+    ("social_decay", "test_social_decay.py", "grudges form, then wear off again"),
     ("input_recovery", "test_input_recovery.py", "Tk-only startup and keyboard escape"),
     ("desktop_recovery", "test_desktop_recovery.py", "backup coverage and retryable window undo"),
     ("behavior_recovery", "test_behavior_recovery.py", "first landings and delayed-shot ownership"),
@@ -79,6 +81,20 @@ CHECKS = [
 ]
 
 
+def skipped(proc):
+    """How many tests a check skipped rather than ran.
+
+    A check that skips its real work still exits 0, and the runner used to
+    print that as a flat "pass". On Windows the X11 overlay check skips the one
+    test that proves cross-process input delivery, and the Linux runtime check
+    skips four of its five -- so "50/50 passed" claimed more than was measured.
+    unittest writes "OK (skipped=N)"; plain-script checks have no marker.
+    Nothing is captured under -v, so the count is only available without it.
+    """
+    text = (proc.stdout or "") + (proc.stderr or "")
+    return sum(int(n) for n in re.findall(r"skipped=(\d+)", text))
+
+
 def main(argv):
     verbose = "-v" in argv or "--verbose" in argv
     wanted = [a for a in argv if not a.startswith("-")]
@@ -100,6 +116,7 @@ def main(argv):
         print("checking %s\n" % src)
 
     failed = []
+    skips = 0
     t0 = time.perf_counter()
     for name, path, blurb in picked:
         print("%-12s %-42s " % (name, blurb), end="", flush=True)
@@ -107,14 +124,24 @@ def main(argv):
         proc = subprocess.run([sys.executable, os.path.join(HERE, path)],
                               capture_output=not verbose, text=True)
         took = time.perf_counter() - started
+        n = skipped(proc)
         if proc.returncode == 0:
-            print("pass  %5.1fs" % took)
+            print("pass  %5.1fs%s" % (took, "  (%d skipped)" % n if n else ""))
+            skips += n
         else:
             print("FAIL  %5.1fs" % took)
             failed.append((name, proc.stdout or "", proc.stderr or ""))
 
-    print("\n%d/%d passed in %.0fs" % (len(picked) - len(failed), len(picked),
-                                       time.perf_counter() - t0))
+    if verbose:
+        # Nothing is captured under -v, so skipped() saw nothing. Say so rather
+        # than printing the bare "N/N passed" this feature exists to qualify.
+        note = "  (skip counts unavailable under -v)"
+    elif skips:
+        note = "  (%d test(s) skipped, so not everything above was proved)" % skips
+    else:
+        note = ""
+    print("\n%d/%d passed in %.0fs%s"
+          % (len(picked) - len(failed), len(picked), time.perf_counter() - t0, note))
     for name, out, err in failed:
         print("\n" + "=" * 66)
         print("FAILED: %s" % name)

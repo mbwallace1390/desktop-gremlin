@@ -8,7 +8,7 @@ render-time simulation is involved.
 """
 import math
 
-from gremlin_physics import preset
+from gremlin_physics import preset, squash_axes
 
 ACTIVE = frozenset(("grabbed", "thrown", "ko"))
 RECOVERY = .32
@@ -25,9 +25,11 @@ def _wrap(angle):
 
 
 def _axes(f):
+    # Shared with App.frame's drawing transform: clamping only this copy would
+    # let the two bases diverge silently. See gremlin_physics.squash_axes.
+    sqx, sqy = squash_axes(f.squash)
     c, s = math.cos(f.tumble), math.sin(f.tumble)
-    return (f.face * f.sc * (1 + f.squash * .22),
-            f.sc * (1 - f.squash * .28), c, s)
+    return (f.face * f.sc * sqx, f.sc * sqy, c, s)
 
 
 def _local(vector, axes):

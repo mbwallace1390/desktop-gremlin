@@ -89,10 +89,16 @@ class SocialScenes(unittest.TestCase):
 
     def test_01_relationships_persist_under_stable_keys_and_forget_rebinds(self):
         self.a.nickname, self.b.nickname = "Private nickname", "Another nickname"
+        # The clock has to move. on_hit bonds once per HIT_BOND_INTERVAL, so a
+        # hundred hits at one instant are one grudge: this used to reach about
+        # -100 and now reaches -5.3, which is above both rivalry thresholds
+        # _consider() reads. assertLess(score, 0) stayed green either way, so
+        # the test kept its name while no longer proving a rivalry forms.
         for _ in range(100):
+            self.director.time += 4.0
             self.director.on_hit(self.a, self.b, 30)
         score = self.director.affinity(self.a, self.b)
-        self.assertLess(score, 0, "Repeated hits must create a rivalry")
+        self.assertLess(score, -15, "Repeated hits must create a real rivalry")
         self.assertGreaterEqual(score, -100)
         self.assertEqual(score, self.director.affinity(self.b, self.a))
         raw = json.dumps(self.memory)

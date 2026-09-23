@@ -112,6 +112,22 @@ def segment_contact(x0, y0, x1, y1, left, top, right, bottom):
     return max(0., enter), normal[0] / max(length, 1.), normal[1] / max(length, 1.)
 
 
+PICK_RADIUS = 62.0     # the grab reach at every size up to 1.24, in px
+
+
+def pick_radius(scale):
+    """How far from his hips the cursor may be and still pick him up.
+
+    `App.near_fighter` and the Linux overlay's input shape both use this, so a
+    click the shape lets through always finds him. 62 px was the radius at
+    every size, which at size 2.5 left his head and feet out of reach; it now
+    grows with him once he outgrows it, and nothing up to size 1.24 changes.
+    """
+    if not math.isfinite(scale):
+        scale = 1.0
+    return max(PICK_RADIUS, 50.0 * scale)
+
+
 class CursorHistory:
     """A 100ms velocity fit makes release independent of the last mouse poll."""
     def __init__(self):

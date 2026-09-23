@@ -24,7 +24,7 @@ Quit hides the overlay first and must finish teardown even if cleanup fails.
 python tests\run_all.py
 ```
 
-51 checks on Windows; `tests/run_all.py` selects the shared and Linux subset
+52 checks on Windows; `tests/run_all.py` selects the shared and Linux subset
 on Linux. Linux tests require isolated Xvfb and `GREMLIN_ISOLATED_X11=1`.
 Production never synthesizes input. `gremlin_x11_probe.py` is an opt-in source
 and frozen acceptance helper that uses a separate receiver process and proves
@@ -314,6 +314,21 @@ it in the shared place and the check says whether it still lines up.
 reused rather than recreated, and Tk draws in creation order, so stacking comes
 from `_frame_end()` raising the layer tags in a fixed sequence. A `self.line()`
 with no preceding `self.layer(...)` inherits whatever layer ran last.
+
+**Rounded plates are Windows-only.** A speech bubble is one smoothed polygon
+(`_plate`), but the X11 shape mask understands lines, ovals, rectangles and
+text and nothing else, so on Linux `_plate` falls back to a rectangle and a
+line tail (as it does for any canvas but the plain Tk one). A polygon added
+anywhere else would be invisible on Linux. **Every painted pixel catches
+clicks** through the Windows colour key, so the name tag has no plate there:
+its letters are outlined instead, after a solid plate under his feet took the
+clicks meant for the icon he stood on. Linux keeps the plate `text()` draws.
+The grab radius is shared the same way: `PHYSICS.pick_radius` feeds
+`App.near_fighter`, the hover rings and the X11 input shape's
+`fighter_regions`, so a click the shape lets through always finds him.
+`tests/test_polish.py` reads all of it off the canvas and drives both branches
+of `_plate` by flipping `IS_WINDOWS` after startup; the X11 shape itself only
+runs on Linux CI.
 
 **The canvas is the bottleneck, and it is paint, not item churn.** Measured:
 2.0 ms/frame of a 25 ms budget, ~80% of it painting a fullscreen layered

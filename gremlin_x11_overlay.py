@@ -14,6 +14,8 @@ import os
 import sys
 import threading
 
+from gremlin_physics import pick_radius
+
 
 MAX_ITEMS = 12000
 MAX_PIXELS = 128 * 1024 * 1024
@@ -91,15 +93,18 @@ def canvas_commands(canvas, width, height):
 
 
 def fighter_regions(fighters, ox, oy, width, height):
-    """Circles match App.near_fighter: radius 62, centre y - 34 * scale."""
+    """Circles match App.near_fighter: centre y - 34 * scale, radius from the
+    shared picker, so a click this shape lets through always finds him."""
     result = []
     for f in fighters:
         cx, cy = float(f.x) - ox, float(f.y) - 34 * float(f.sc) - oy
         if not (math.isfinite(cx) and math.isfinite(cy)):
             raise ValueError("Invalid fighter input position")
-        if cx + 62 < 0 or cy + 62 < 0 or cx - 62 > width or cy - 62 > height:
+        r = pick_radius(float(f.sc))
+        if cx + r < 0 or cy + r < 0 or cx - r > width or cy - r > height:
             continue
-        result.append((int(round(cx - 62)), int(round(cy - 62)), 124, 124))
+        side = int(round(2 * r))
+        result.append((int(round(cx - r)), int(round(cy - r)), side, side))
     return result
 
 

@@ -20,8 +20,10 @@ Run:      run_gremlin.bat      Quit: tray icon -> Quit
 Debug:    run_gremlin.bat --debug
 """
 
+import base64
 import ctypes
 import ctypes.wintypes as wt
+import itertools
 import json
 import math
 import os
@@ -31,6 +33,8 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
+import zlib
 from contextlib import contextmanager, nullcontext
 from tkinter import ttk
 from gremlin_profiles import (normalize_cast, normalize_profiles, selected_cast,
@@ -61,7 +65,7 @@ if IS_WINDOWS:
 elif sys.platform != "linux":
     raise RuntimeError("Desktop Gremlin supports Windows and Linux X11.")
 
-VERSION = "3.2.2"
+VERSION = "3.3.0"
 DEBUG = "--debug" in sys.argv
 HERE, DATA_DIR = runtime_paths(__file__)
 SETTINGS_PATH = os.path.join(DATA_DIR, "gremlin_settings.json")
@@ -1373,52 +1377,104 @@ def virtual_screen():
 # ==========================================================================
 #  SYSTEM TRAY  (raw Shell_NotifyIcon — no extra dependencies)
 # ==========================================================================
-def _write_ico(path):
-    """Build a 16x16 32bpp .ico of a little stick figure, by hand."""
-    W = H = 16
-    px = [[(0, 0, 0, 0)] * W for _ in range(H)]
-    ink = (255, 211, 92)          # the 'hyped' yellow, BGRA-ordered later
-    dim = (180, 150, 70)
+# The small-icon size at every Windows scaling step from 100% to 500%, plus
+# the larger ones Explorer uses: the EXE's icon (packaging/app.ico) carries all
+# of them. The tray's own file carries exactly what this machine asks for
+# (tray_icon_sizes); a lone 16 px icon was stretched to 20 px at 125%.
+ICON_SIZES = (16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96, 128)
+# The mascot on a 64-unit square: spine, a lowered arm and a waving one, two
+# legs, and a head ring round a dark face.
+_ICON_STROKES = ((32, 28, 32, 45), (32, 35, 19, 41), (32, 35, 47, 25),
+                 (32, 45, 22, 59), (32, 45, 42, 59))
+_ICON_HEAD = (32, 15, 10.0)             # centre x, centre y, ring radius
 
-    def dot(x, y, c=ink):
-        if 0 <= x < W and 0 <= y < H:
-            px[y][x] = c
 
-    def line(x0, y0, x1, y1, c=ink):
-        n = max(abs(x1 - x0), abs(y1 - y0), 1)
-        for i in range(n + 1):
-            dot(round(x0 + (x1 - x0) * i / n), round(y0 + (y1 - y0) * i / n), c)
+def render_icon(size):
+    """RGBA rows of the mascot at `size` px, antialiased by signed distance.
+    A yellow figure with a dark rim, so it reads on a light taskbar as well as
+    a dark one; eyes once there are pixels enough for them."""
+    k = size / 64.0
+    half = max(.62, 2.6 * k)            # stroke half-width, px
+    rim = max(.9, 1.9 * k)              # dark edge beyond every stroke, px
+    hx, hy, hr = (v * k for v in _ICON_HEAD)
+    segs = [tuple(v * k for v in s) for s in _ICON_STROKES]
+    eyes = ((hx - 3.4 * k, hy - .6 * k), (hx + 3.4 * k, hy - .6 * k)) if size >= 24 else ()
+    layers = ((22, 26, 42), (255, 211, 92), (232, 237, 255))   # rim/face, ink, eyes
 
-    for a in range(0, 360, 18):          # head
-        r = 2.6
-        dot(round(8 + math.cos(math.radians(a)) * r),
-            round(3.4 + math.sin(math.radians(a)) * r))
-    dot(8, 3); dot(7, 3); dot(8, 4); dot(7, 4); dot(8, 2); dot(7, 2)
-    line(8, 6, 8, 10)                    # spine
-    line(8, 7, 4, 6, dim)                # arms
-    line(8, 7, 12, 5)
-    line(8, 10, 5, 14)                   # legs
-    line(8, 10, 12, 14)
+    def cover(d):                       # signed distance -> pixel coverage
+        return clamp(.5 - d, 0.0, 1.0)
 
-    rows = b""
-    for y in range(H - 1, -1, -1):       # bottom-up
-        for x in range(W):
-            c = px[y][x]
-            if len(c) == 3:
-                r, g, b, a = c[0], c[1], c[2], 255
-            else:
-                r, g, b, a = c
-            rows += struct.pack("<BBBB", b, g, r, a)
-    andmask = b"\x00" * (4 * H)
+    rows = []
+    for py in range(size):
+        y = py + .5
+        row = []
+        for px in range(size):
+            x = px + .5
+            dh = math.hypot(x - hx, y - hy)
+            d = abs(dh - hr) - half
+            for x0, y0, x1, y1 in segs:
+                dx, dy = x1 - x0, y1 - y0
+                t = min(1.0, max(0.0, ((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy)))
+                d = min(d, math.hypot(x - x0 - t * dx, y - y0 - t * dy) - half)
+            eye = min((math.hypot(x - ex, y - ey) for ex, ey in eyes), default=9.0) - 1.6 * k
+            alphas = (max(cover(d - rim), cover(dh - hr)), cover(d), cover(eye))
+            r = g = b = a = 0.0
+            for (cr, cg, cb), ca in zip(layers, alphas):   # premultiplied "over"
+                r, g, b = cr * ca + r * (1 - ca), cg * ca + g * (1 - ca), cb * ca + b * (1 - ca)
+                a = ca + a * (1 - ca)
+            row.append((0, 0, 0, 0) if a <= 0 else
+                       (int(r / a + .5), int(g / a + .5), int(b / a + .5), int(a * 255 + .5)))
+        rows.append(row)
+    return rows
 
-    bih = struct.pack("<IiiHHIIiiII", 40, W, H * 2, 1, 32, 0, len(rows) + len(andmask),
-                      0, 0, 0, 0)
-    img = bih + rows + andmask
-    ico = struct.pack("<HHH", 0, 1, 1)
-    ico += struct.pack("<BBBBHHII", W, H, 0, 0, 1, 32, len(img), 22)
-    ico += img
+
+def png_bytes(rows):
+    """RGBA rows as a PNG, with nothing beyond zlib."""
+    height, width = len(rows), len(rows[0])
+    raw = b"".join(b"\0" + bytes(v for px in row for v in px) for row in rows)
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def tray_icon_sizes():
+    """The small and large icon sizes at this machine's scaling, plus 16 px
+    as a fallback: exactly what the tray and the title bars will ask for, so
+    nothing is stretched at any scaling, 110% and 175% included."""
+    if not IS_WINDOWS:
+        return (16, 32)
+    return tuple(sorted({16, win32api.GetSystemMetrics(win32con.SM_CXSMICON) or 16,
+                         win32api.GetSystemMetrics(win32con.SM_CXICON) or 32}))
+
+
+def _write_ico(path, sizes=None, png_sizes=()):
+    """A multi-size 32bpp .ico of the mascot: by default the sizes this
+    machine asks for (tray_icon_sizes). png_sizes are stored as PNG, which is
+    how a 256 px image stays small (packaging/app.ico)."""
+    images = []
+    for size in sorted(set(sizes or tray_icon_sizes()) | set(png_sizes)):
+        rows = render_icon(size)
+        if size in png_sizes:
+            images.append((size, png_bytes(rows)))
+            continue
+        xor = b"".join(bytes(v for r, g, b, a in rows[y] for v in (b, g, r, a))
+                       for y in range(size - 1, -1, -1))        # bottom-up BGRA
+        andmask = b"\x00" * (((size + 31) // 32) * 4 * size)  # alpha does the work
+        bih = struct.pack("<IiiHHIIiiII", 40, size, size * 2, 1, 32, 0,
+                          len(xor) + len(andmask), 0, 0, 0, 0)
+        images.append((size, bih + xor + andmask))
+    head = struct.pack("<HHH", 0, 1, len(images))
+    offset, body = 6 + 16 * len(images), b""
+    for size, blob in images:
+        head += struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0, 1, 32,
+                            len(blob), offset + len(body))
+        body += blob
     with open(path, "wb") as f:
-        f.write(ico)
+        f.write(head + body)
     return path
 
 
@@ -1467,8 +1523,12 @@ class Tray:
             print("Emergency exit shortcut could not be registered.")
 
         try:
+            # Drawn at the sizes this scaling asks for and loaded at the one
+            # the notification area draws; a fixed 16 px icon was stretched.
             ico = _write_ico(ICON_PATH)
-            self.hicon = win32gui.LoadImage(0, ico, win32con.IMAGE_ICON, 16, 16,
+            cx = win32api.GetSystemMetrics(win32con.SM_CXSMICON) or 16
+            cy = win32api.GetSystemMetrics(win32con.SM_CYSMICON) or 16
+            self.hicon = win32gui.LoadImage(0, ico, win32con.IMAGE_ICON, cx, cy,
                                             win32con.LR_LOADFROMFILE)
         except Exception:
             self.hicon = win32gui.LoadIcon(0, win32con.IDI_APPLICATION)
@@ -1618,6 +1678,113 @@ if not IS_WINDOWS:
     def set_run_at_startup(on): return LINUX.set_run_at_startup(on, __file__)
 
 
+_ICON_PNGS = {}
+
+
+def dress_window(win):
+    """The mascot in the title bar instead of Tk's feather, and on Windows
+    10/11 a dark title bar over the dark window. Cosmetic only: any failure
+    leaves the window as Tk made it.
+
+    Done once Tk is idle, not now: setting a window's icon maps it on Windows,
+    and mapping here showed a window its caller meant to withdraw straight
+    away (the self-test builds Settings hidden). A window still withdrawn by
+    then is left alone."""
+    win.after_idle(lambda: _dress(win))
+
+
+def _dress(win):
+    try:
+        if not win.winfo_exists() or win.state() == "withdrawn":
+            return
+        sizes = (32, 16)
+        for size in sizes:
+            if size not in _ICON_PNGS:
+                _ICON_PNGS[size] = base64.b64encode(png_bytes(render_icon(size))).decode("ascii")
+        images = [tk.PhotoImage(master=win, data=_ICON_PNGS[s]) for s in sizes]
+        win.iconphoto(False, *images)
+        win.gremlin_icon = images        # Tk drops an image nobody holds
+    except Exception:
+        return
+    if IS_WINDOWS:
+        _dress_frame(win)
+
+
+def _dress_frame(win):
+    """The Windows half of dress_window, on the mapped frame. Tk hands Windows
+    only its 16 and 32 px images, stretched at any scaling above 100%, so the
+    title bar and taskbar get the exact sizes from the tray's icon file."""
+    try:
+        hwnd = wt.HWND(int(win.wm_frame(), 16))
+        icons = []
+        if os.path.exists(ICON_PATH):
+            for which, metric in ((0, win32con.SM_CXSMICON), (1, win32con.SM_CXICON)):
+                size = win32api.GetSystemMetrics(metric)
+                icon = win32gui.LoadImage(0, ICON_PATH, win32con.IMAGE_ICON, size, size,
+                                          win32con.LR_LOADFROMFILE)
+                if icon:
+                    win32gui.SendMessage(int(hwnd.value), win32con.WM_SETICON, which, icon)
+                    icons.append(icon)
+
+        def release(event):
+            if event.widget is win:
+                for icon in icons:
+                    try:
+                        win32gui.DestroyIcon(icon)
+                    except Exception:
+                        pass
+        win.bind("<Destroy>", release, add="+")
+        on = ctypes.c_int(1)
+        # DWMWA_USE_IMMERSIVE_DARK_MODE is 20 since Windows 10 20H1 and was 19
+        # before it; then redraw the frame so the change shows now.
+        dwm = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        if dwm(hwnd, 20, ctypes.byref(on), ctypes.sizeof(on)) != 0:
+            dwm(hwnd, 19, ctypes.byref(on), ctypes.sizeof(on))
+        ctypes.windll.user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0037)
+    except Exception:
+        pass
+
+
+def dark_ttk(master):
+    """Dark tabs and drop-downs for Settings. The native Windows theme paints
+    its own white chrome whatever colours it is given, so on Windows the
+    notebook and comboboxes move to 'clam', which takes them; only Settings
+    uses ttk there. Linux keeps its theme: its control window is ttk as well."""
+    if not IS_WINDOWS:
+        return
+    bg, deep, raised, edge, ink, dim = ("#171B2C", "#0E1120", "#232A45", "#2A3150",
+                                        "#E6ECFF", "#8FA0CC")
+    try:
+        style = ttk.Style(master)
+        if style.theme_use() != "clam":
+            style.theme_use("clam")
+        style.configure("TNotebook", background=bg, borderwidth=0, bordercolor=bg,
+                        lightcolor=bg, darkcolor=bg, tabmargins=(2, 4, 2, 0))
+        style.configure("TNotebook.Tab", background=raised, foreground=dim,
+                        padding=(12, 5), borderwidth=0, bordercolor=bg,
+                        lightcolor=raised, focuscolor=bg)
+        # clam pads the selected tab less; matching it stops the strip
+        # shifting sideways every time the selection moves
+        style.map("TNotebook.Tab", background=[("selected", bg), ("active", edge)],
+                  foreground=[("selected", ink), ("active", ink)],
+                  lightcolor=[("selected", bg)], padding=[("selected", (12, 5))])
+        style.configure("TFrame", background=bg)
+        style.configure("TCombobox", fieldbackground=deep, background=edge,
+                        foreground=ink, arrowcolor=ink, bordercolor=edge,
+                        lightcolor=deep, darkcolor=deep, selectbackground=deep,
+                        selectforeground=ink, insertcolor=ink)
+        style.map("TCombobox", fieldbackground=[("readonly", deep)],
+                  foreground=[("readonly", ink)], background=[("active", "#39426B")],
+                  selectbackground=[("readonly", deep)],
+                  selectforeground=[("readonly", ink)])
+        master.option_add("*TCombobox*Listbox.background", deep)
+        master.option_add("*TCombobox*Listbox.foreground", ink)
+        master.option_add("*TCombobox*Listbox.selectBackground", edge)
+        master.option_add("*TCombobox*Listbox.selectForeground", "#FFFFFF")
+    except tk.TclError:
+        pass
+
+
 class SettingsWindow:
     def __init__(self, master, app):
         self.app = app
@@ -1627,6 +1794,7 @@ class SettingsWindow:
         self.win.resizable(False, False)
         self.win.configure(bg="#171B2C")
         self.vars = {}
+        dark_ttk(self.win)
         tabs = ttk.Notebook(self.win)
         tabs.pack(fill="both", expand=True, padx=10, pady=(10, 0))
         page = None
@@ -1710,7 +1878,9 @@ class SettingsWindow:
         header("Cast")
         self.vars["cast"] = tk.StringVar(value=CFG["cast"])
         self.vars["profiles"] = tk.StringVar(value=CFG["profiles"])
-        cast_frame = ttk.Frame(page)
+        # A plain dark frame: a ttk.Frame here painted light grey round
+        # every group of controls on the tab.
+        cast_frame = tk.Frame(page, bg="#171B2C")
         cast_frame.grid(row=row, column=0, columnspan=2, padx=14, pady=8)
         self.profiles_panel = ProfilesPanel(cast_frame, self.vars, ROSTER, WEAPONS)
 
@@ -1760,6 +1930,7 @@ class SettingsWindow:
                                  "Keyboard exit shortcut unavailable; details are in the log."),
                  bg="#171B2C", fg="#8FA0CC", font=("Segoe UI", 8)).pack(pady=(0, 10))
         self.win.protocol("WM_DELETE_WINDOW", self.close)
+        dress_window(self.win)
 
     def restore(self):
         self.app.cancel_icon_moves()
@@ -2307,6 +2478,29 @@ MUZZLE_TIP = {"blaster": 20, "lightning": 24, "minigun": 26, "rocket": 30,
               "bomb": 12, "balloon": 12, "peel": 10, "spring": 10,
               "boomerang": 22, "bubble": 26, "freeze": 26, "swap": 26,
               "glove": 26, "rubber": 26, "foam": 26}
+# The bow, in the same local units: an arc of a circle BOW_RADIUS across,
+# centred that far behind the grip along the aim, so the grip in the front hand
+# is the middle of the curve and the limbs sweep BOW_SWEEP radians back towards
+# him on either side. The string is tied to its two ends.
+BOW_RADIUS, BOW_SWEEP = 26.0, .82
+# The nocked arrow, nock to head. attack_pose holds the draw hand 14 units
+# behind the grip at rest and 27 at full draw, so the head sits 17 units past
+# the grip and comes back to 4.
+ARROW_LENGTH = 31.0
+
+
+def bow_arc(grip, draw_hand, n=9):
+    """The bow as n local points, tip to tip; point n // 2 is the grip."""
+    aim = math.atan2(grip[1] - draw_hand[1], grip[0] - draw_hand[0])
+    cx = grip[0] - math.cos(aim) * BOW_RADIUS
+    cy = grip[1] - math.sin(aim) * BOW_RADIUS
+    out = []
+    for i in range(n):
+        ang = aim + BOW_SWEEP * (2.0 * i / (n - 1) - 1.0)
+        out.append((cx + math.cos(ang) * BOW_RADIUS, cy + math.sin(ang) * BOW_RADIUS))
+    return out
+
+
 # The four families beyond plain guns, so the code can ask what a weapon IS
 # instead of listing names at every site.
 PULLERS = ("harpoon", "magnet")           # hits drag the victim closer
@@ -2910,6 +3104,7 @@ NUDGE_PER_MINUTE = 6
 CONFETTI_COLS = ("#FF8AD8", "#6FD8FF", "#FFD35C", "#A8E86A", "#B79BFF")
 WATER = "#7FBBFF"
 WOOD = "#C89A66"
+_LINES_SAID = itertools.count(1)   # orders speech bubbles by when they started
 
 
 class Fighter:
@@ -2990,6 +3185,8 @@ class Fighter:
         self.route_retry = 0.0
         self.route_failed = {}     # failed (from, to) edge -> retry time, RAM only
         self.pose_last = self.pose_from = None
+        self.drawn_head = None      # head centre as last drawn, upright, for the overlay
+        self.said_seq = 0           # when his current line started, in lines said
         self.pose_last_state = self.pose_to = self.state
         self.pose_time = self.pose_started = 0.0
         self.hit_at = -1000.0
@@ -3013,6 +3210,9 @@ class Fighter:
 
     def say(self, txt, dur=1.5):
         self.emote, self.emote_t = txt, dur
+        # Bubbles are placed oldest line first (App.draw), so the one already
+        # on screen keeps its place when a neighbour starts talking.
+        self.said_seq = next(_LINES_SAID)
 
     def yell(self, event, dur=1.5, **fmt):
         """Say something this particular one would say."""
@@ -3178,6 +3378,9 @@ class App:
         self._layers = []
         self._ftag = []
         self._rtag = []
+        self._bubbles = []    # speech bubbles placed so far this frame
+        self._talkers = []    # ...and the lines waiting to be placed
+        self._fonts = {}      # label font -> tkinter Font, for measuring
 
         self.fighters = []
         from gremlin_arsenal import Arsenal
@@ -3658,12 +3861,16 @@ class App:
 
     # -- mouse -------------------------------------------------------------
     def near_fighter(self, sx, sy):
+        """The nearest one whose hips are within his own reach of the cursor.
+        The reach grows with a big gremlin (PHYSICS.pick_radius): a fixed 62 px
+        left a size-2.5 one grabbable only round the middle, never by the head
+        or the feet. The Linux input shape uses the same radius."""
         best, bd = None, 1e9
         for f in self.fighters:
             d = dist(sx, sy, f.x, f.y - 34 * f.sc)
-            if d < bd:
+            if d < bd and d < PHYSICS.pick_radius(f.sc):
                 best, bd = f, d
-        return best if bd < 62 else None
+        return best
 
     def on_down(self, e):
         f = self.near_fighter(e.x + self.ox, e.y + self.oy)
@@ -4800,12 +5007,11 @@ class App:
         tip back off the canvas and holds this to 4px.
 
         The bow is the odd one out: the arrow leaves the bow, which is in the
-        FRONT hand, from the middle of its curve."""
+        FRONT hand, from the middle of its curve -- the grip, in that hand."""
         px, py, lean, _tilt, _fL, _fR, hL, hR = self.pose(f)
         P = self.frame(f)
         if f.weapon == "bow":
-            aim = math.atan2(hL[1] - hR[1], hL[0] - hR[0])
-            return P(hL[0] + math.cos(aim) * 20, hL[1] + math.sin(aim) * 20)
+            return P(*bow_arc(hL, hR)[4])
         nx, ny = rot(0, -26, lean)
         neck = (px + nx, py + ny)
         elb = ik(neck[0], neck[1] - 1, hR[0], hR[1], 13, 13, 1)
@@ -6667,6 +6873,10 @@ class App:
             return c.create_oval(0, 0, 1, 1, tags=tag)
         if kind == "rect":
             return c.create_rectangle(0, 0, 1, 1, tags=tag)
+        if kind == "poly":
+            # Four steps round a corner a few pixels across are as round as
+            # Tk's default twelve, at a third of the points to paint.
+            return c.create_polygon(0, 0, 1, 0, 1, 1, smooth=True, splinesteps=4, tags=tag)
         return c.create_text(0, 0, tags=tag)
 
     def _item(self, kind):
@@ -6780,14 +6990,67 @@ class App:
         ox, oy = self.ox + self.sx, self.oy + self.sy
         self._rect(x0 - ox, y0 - oy, x1 - ox, y1 - oy, fill, outline, w)
 
-    def text(self, x, y, txt, col, font, backing=True):
+    def _poly(self, pts, fill, outline, w):
+        """Canvas coordinates, already offset. A smoothed polygon: see _plate."""
+        it = self._item("poly")
+        self.canvas.coords(it, *pts)
+        key = (fill, outline, w)
+        if self._opt.get(it) != key:
+            self._opt[it] = key
+            self.canvas.itemconfigure(it, fill=fill, outline=outline, width=w,
+                                      state="normal")
+        return it
+
+    def _plate(self, x0, y0, x1, y1, r, fill, outline, w, tail=None):
+        """A rounded plate, optionally with a tail (base_left, base_right,
+        tip_x, tip_y) hanging off its bottom edge. Canvas coordinates.
+
+        One smoothed polygon. Tk rounds every corner of a smooth polygon and
+        keeps a point sharp only where it is given twice, so the straight edges
+        and the tail's corners are doubled and each rounded corner is its one
+        control point. Windows only: the X11 shape mask understands lines,
+        ovals, rectangles and text and nothing else, so Linux keeps the plain
+        rectangle, and the tail as a line. So does any canvas other than the
+        plain Tk one: the quarantined native adapter forwards create_polygon
+        to the widget underneath, outside its own items. Returns the plate."""
+        if not IS_WINDOWS or self.canvas is not self.tk_canvas:
+            it = self._rect(x0, y0, x1, y1, fill, outline, w)
+            if tail is not None:
+                wx, wy = self.ox + self.sx, self.oy + self.sy
+                self.line(((tail[0] + tail[1]) / 2 + wx, y1 + wy,
+                           tail[2] + wx, tail[3] + wy), outline or fill, 2)
+            return it
+        r = max(0.0, min(r, (x1 - x0) / 2, (y1 - y0) / 2))
+        pts = []
+
+        def sharp(x, y):
+            pts.extend((x, y, x, y))
+        sharp(x0 + r, y0)
+        sharp(x1 - r, y0)
+        pts.extend((x1, y0))
+        sharp(x1, y0 + r)
+        sharp(x1, y1 - r)
+        pts.extend((x1, y1))
+        sharp(x1 - r, y1)
+        if tail is not None:
+            sharp(tail[1], y1)
+            sharp(tail[2], tail[3])
+            sharp(tail[0], y1)
+        sharp(x0 + r, y1)
+        pts.extend((x0, y1))
+        sharp(x0, y1 - r)
+        sharp(x0, y0 + r)
+        pts.extend((x0, y0))
+        return self._poly(pts, fill, outline, w)
+
+    def text(self, x, y, txt, col, font, backing=True, anchor="w"):
         it = self._item("text")
         self.canvas.coords(it, x, y)
-        key = (txt, col, font)
+        key = (txt, col, font, anchor)
         if self._opt.get(it) != key:
             self._opt[it] = key
             self.canvas.itemconfigure(it, text=txt, fill=col, font=font,
-                                      anchor="w", state="normal")
+                                      anchor=anchor, state="normal")
         if not IS_WINDOWS and backing and txt:
             # X11 uses a text bounding shape. Make that area an intentional,
             # contrasting label plate rather than exposing the canvas key colour.
@@ -6974,21 +7237,26 @@ class App:
                 self.dot(f.zip["ax"], f.zip["ay"], max(2.5, 5 * f.K()), ROPE)
 
         if self.hover is not None and not self.hover.grabbed:
-            col = self.hover.color()
+            # The grab rings grow with him, like the reach they advertise: at
+            # a fixed 36 px they were a bullseye on a small one's whole body
+            # and a dot on the belt of a big one. His name tag is drawn with
+            # the rest of his overlay (draw_overlay), once.
+            h = self.hover
+            k = PHYSICS.pick_radius(h.sc) / PHYSICS.PICK_RADIUS   # 1 up to size 1.24
+            col = h.color()
             self.layer("hover")
             for r, w in ((36, 7), (18, 5)):
-                self.ring(self.hover.x, self.hover.y - 30 * self.hover.sc, r, col, w)
-            # Name the one under the cursor. Ten of them, and the halo only
-            # says who once you have learned the colours.
-            name = "the " + self.hover.kind
-            self.text(self.hover.x - self.ox - self.sx - len(name) * 3.4,
-                      self.hover.y - self.oy - self.sy + 16,
-                      name, col, ("Segoe UI", 10, "bold"))
+                self.ring(h.x, h.y - 30 * h.sc, r * k, col, max(2, round(w * k)))
 
         for i, f in enumerate(self.fighters):
             self.draw_fighter(f, i)
+        self._bubbles, self._talkers = [], []
         for i, f in enumerate(self.fighters):
             self.draw_overlay(f, i)
+        # Oldest line first: the bubble already on screen keeps its place and
+        # a newcomer moves round it, rather than whoever has the lower index.
+        for talker in sorted(self._talkers, key=lambda t: t[:2]):
+            self.speech_bubble(*talker[2:])
         self.motion.draw()
         self.arsenal.draw()
         self.social.draw()
@@ -6997,16 +7265,18 @@ class App:
             self.x11_overlay.present(self.fighters, self.ox, self.oy)
 
     # ---- the figure ------------------------------------------------------
-    def frame(self, f):
+    def frame(self, f, upright=False):
         """Body-local units to the screen: the way he faces, his size, the
         landing squash and the tumble. One function for the drawing and for
-        muzzle(), so a round leaves the weapon as it is actually drawn."""
+        muzzle(), so a round leaves the weapon as it is actually drawn.
+        upright leaves the tumble out, for things that should not spin with
+        him: a speech bubble anchored to a tumbling head circled him."""
         S = f.sc
         # Shared with gremlin_ragdoll._axes, which divides by these: the passive
         # limbs have to solve in the same basis the body is drawn in.
         sqx, sqy = PHYSICS.squash_axes(f.squash)
         fx, fy = f.face * S * sqx, S * sqy
-        ca, sa = math.cos(f.tumble), math.sin(f.tumble)
+        ca, sa = (1.0, 0.0) if upright else (math.cos(f.tumble), math.sin(f.tumble))
 
         def P(lx, ly):
             X, Y = lx * fx, ly * fy
@@ -7392,6 +7662,9 @@ class App:
         # limb the same way would need a second line under each one -- measured
         # at ten of them, +168 items and +25% of the frame.
         hxp, hyp = P(*head)
+        # For the overlay (speech tail, snore): where the head is, sitting,
+        # lying or standing -- but not round a tumble.
+        f.drawn_head = self.frame(f, upright=True)(*head)
         self.layer(th)
         hw = max(3, round(5.0 * S))
         if f.mood == "furious":
@@ -7529,21 +7802,25 @@ class App:
             self.layer(twd)
             self.dot(*rel(2, 2), max(2, 4 * S), "#E05A3A")
         elif w == "bow":
-            aim = math.atan2(hL[1] - hR[1], hL[0] - hR[0])
-            pts = []
-            for i in range(9):
-                ang = aim - 1.9 + (3.8 * i / 8)
-                pts += list(P(hL[0] + math.cos(ang) * 20, hL[1] + math.sin(ang) * 20))
-            self.line(pts, ROPE, max(2, round(3.2 * S)))
-            k = clamp(f.atk / f.atk_dur, 0, 1)
-            u = clamp(k / .55 if k < .55 else (k - .55) / .10, 0, 1)
-            u = u * u * (3 - 2 * u)
-            pull = -16 * (u if k < .55 else 1 - u)
-            bx, by = rot(pull, 0, aim)
-            e1x, e1y = math.cos(aim - 1.9) * 20, math.sin(aim - 1.9) * 20
-            e2x, e2y = math.cos(aim + 1.9) * 20, math.sin(aim + 1.9) * 20
-            self.line((*P(hL[0] + e1x, hL[1] + e1y), *P(hL[0] + bx, hL[1] + by),
-                       *P(hL[0] + e2x, hL[1] + e2y)), STEEL, max(1, round(1.6 * S)))
+            # Held by its grip: the front hand is the middle of the arc, the
+            # limbs sweep back towards him, and the string runs to the draw
+            # hand until the release, then snaps straight. It used to be a
+            # 218-degree arc centred ON the fist -- a ring round his hand.
+            arc = bow_arc(hL, hR)          # arc[4] is the grip; muzzle() fires from it
+            e1, e2 = arc[0], arc[-1]
+            self.line([v for p in arc for v in P(*p)], WOOD, max(2, round(3.2 * S)))
+            drawn = f.atk < RELEASE_AT.get("bow", .55) * f.atk_dur
+            nock = hR if drawn else ((e1[0] + e2[0]) / 2, (e1[1] + e2[1]) / 2)
+            self.line((*P(*e1), *P(*nock), *P(*e2)), STEEL, max(1, round(1.6 * S)))
+            if drawn:
+                # The arrow on the string keeps its length, so it slides back
+                # with the draw hand and its head comes to rest at the grip.
+                aim = math.atan2(hL[1] - hR[1], hL[0] - hR[0])
+                head = (hR[0] + math.cos(aim) * ARROW_LENGTH,
+                        hR[1] + math.sin(aim) * ARROW_LENGTH)
+                self.line((*P(*hR), *P(*head)), ROPE, max(1, round(1.8 * S)))
+                self.layer(twd)
+                self.dot(*P(*head), max(1.2, 2.2 * S), STEEL)
         elif w == "blaster":
             self.line((*rel(-4, 0), *rel(18, 0)), GUNMETAL, max(2, round(8 * S)))
             self.layer(twd)
@@ -7645,12 +7922,26 @@ class App:
     def draw_overlay(self, f, fi):
         to, tob, tot = self._ftag[fi][6:]
         S = f.sc
-        self.layer(to)
+        wx, wy = self.ox + self.sx, self.oy + self.sy
+        # Where draw_fighter put his head, upright; the speech tail and the
+        # snore aim at it, sitting, lying or standing.
+        hx, hy = f.drawn_head or (f.x, f.y - 67 * S)
         if self.hover is f or f.grabbed:
-            self.text(f.x - self.ox - self.sx,
-                      min(self.H - 14, f.y - self.oy - self.sy + 14),
-                      getattr(f, "nickname", f.kind.title()), f.color(),
-                      ("Segoe UI", 9, "bold"))
+            self.name_tag(f, tot)
+        self.layer(to)
+        if f.state == "sleep" or (f.state == "perch" and f.play
+                                  and f.play.get("phase") == 2):
+            # Three z's rising off the head, each growing as it climbs and
+            # starting again at the bottom: a snore needs no font, and lines
+            # have no antialiased edge to fringe against the key colour.
+            w = max(1, round(1.6 * S))
+            for i in range(3):
+                u = (self.time * .45 + i / 3.0) % 1.0
+                s = (2.5 + 4.5 * u) * S
+                zx = hx + f.face * (7 + 12 * u) * S + math.sin(u * 5 + i) * 2 * S
+                zy = hy - (19 + 28 * u) * S
+                self.line((zx - s, zy - s, zx + s, zy - s,
+                           zx - s, zy + s, zx + s, zy + s), f.color(), w)
         if f.carry:
             c = f.carry
             w = min(c["w"], 46) * .8
@@ -7677,33 +7968,121 @@ class App:
                          2.3 * S, f.color())
 
         if f.emote_t > 0 and f.emote:
-            fs = int(clamp(round(9 * S + 4), 9, 18))
-            bx = f.x + 16 * S - self.ox - self.sx
-            by = f.y - 102 * S - self.oy - self.sy
-            col = f.color()
-            fam, style = SPEECH_FONT.get(f.kind, ("Segoe UI", "bold"))
-            self.layer(tot)
-            t = self.text(bx, by, f.emote, col, (fam, fs, style), backing=False)
-            bb = self.canvas.bbox(t)
-            if bb:
-                # Keep the bubble on screen. A long line from someone near the
-                # right edge used to run straight off it, and the tail below is
-                # what keeps a shoved bubble pointing at its speaker.
-                dx = min(0, (self.W - 10) - bb[2])
-                if bb[0] + dx < 10:
-                    dx = 10 - bb[0]
-                dy = max(0, 8 - bb[1])
-                if dx or dy:
-                    self.canvas.coords(t, bx + dx, by + dy)
-                    bb = (bb[0] + dx, bb[1] + dy, bb[2] + dx, bb[3] + dy)
-                # the box layer is raised before the text layer, so it lands behind
-                pad = fs * .55
-                self.layer(tob)
-                self._rect(bb[0] - pad, bb[1] - pad * .7, bb[2] + pad,
-                           bb[3] + pad * .7, "#0C1024", col, 2)
-                wx, wy = self.ox + self.sx, self.oy + self.sy
-                self.line((bb[0] + wx + 6, bb[3] + wy + pad * .7,
-                           f.x + 6 * S * f.face, f.y - 82 * S), col, 2)
+            # The bubble keeps clear of what is drawn over his head -- the
+            # health bar, a carried icon -- and points down at the highest of
+            # it. draw() places every bubble once all the overlays are down.
+            top = hy - 11.5 * S
+            if f.foe and 0 < f.hp < 100 and f.state != "ko":
+                top = min(top, f.y - 96 * S)
+            if f.carry:
+                top = min(top, f.y - 84 * S - f.carry["h"] / 2,
+                          f.y - 92 * S - min(f.carry["h"], 46) * .35)
+            self._talkers.append((f.said_seq, fi, f, tob, tot, hx - wx, top - wy))
+
+    def text_size(self, txt, font):
+        """(width, height) of a label in pixels, from the font's metrics."""
+        measure = self._fonts.get(font)
+        if measure is None:
+            measure = self._fonts[font] = tkfont.Font(root=self.root, font=font)
+        return measure.measure(txt), measure.metrics("linespace")
+
+    def name_tag(self, f, tot):
+        """His name under his feet, kept on the screen. One tag: there used to
+        be two, "the kind" from the hover rings and the nickname from here,
+        drawn a pixel apart.
+
+        On Windows the letters get a one-pixel dark outline so a pastel name
+        reads on a pale wallpaper. Not a plate: through the colour key every
+        painted pixel catches clicks, and a solid plate under his feet took
+        the ones meant for whatever he stood on. Linux keeps the plate text()
+        gives it, which its X11 shape needs anyway."""
+        name = getattr(f, "nickname", f.kind.title())
+        font = ("Segoe UI", 9, "bold")
+        w, h = self.text_size(name, font)
+        x = clamp(f.x - self.ox - self.sx, 4 + w / 2, max(4 + w / 2, self.W - 4 - w / 2))
+        y = min(f.y - self.oy - self.sy + 8, self.H - 4 - h)
+        self.layer(tot)
+        if IS_WINDOWS:
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                self.text(x + dx, y + dy, name, "#0C1024", font, backing=False, anchor="n")
+        self.text(x, y, name, f.color(), font, anchor="n")
+
+    def speech_bubble(self, f, tob, tot, hx, top):
+        """His line in a rounded bubble whose tail points down at (hx, top),
+        canvas coordinates: the top of his head, or of whatever is drawn over
+        it. The bubble sits a tail's length above that, stays on the screen,
+        and moves clear of every bubble placed before it this frame -- up if
+        there is room, otherwise sideways -- so neighbours stay readable.
+
+        The tail used to be a line from the box corner to his head, and at the
+        default size the box sat three pixels above the head, so there was no
+        tail to see."""
+        S = f.sc
+        fs = int(clamp(round(9 * S + 4), 9, 18))
+        col = f.color()
+        fam, style = SPEECH_FONT.get(f.kind, ("Segoe UI", "bold"))
+        self.layer(tot)
+        x, y = hx - 4 * S, top
+        t = self.text(x, y, f.emote, col, (fam, fs, style), backing=False)
+        bb = self.canvas.bbox(t)
+        if not bb:
+            return
+        padx, pady = fs * .6, fs * .3
+        gap = max(7.0, 11 * S)                 # the tail, when nothing is in the way
+        cap = max(10.0, 16 * S)                # the longest tail, once it has moved
+        # Canvas box of the whole bubble, first a tail's length above (hx, top).
+        dy = (top - gap) - (bb[3] + pady)
+        box = [bb[0] - padx, bb[1] - pady + dy, bb[2] + padx, bb[3] + pady + dy]
+
+        def shift(dx, dy):
+            box[0] += dx
+            box[2] += dx
+            box[1] += dy
+            box[3] += dy
+        # On screen: a long line from someone near the right edge used to run
+        # straight off it.
+        shift(max(min(0.0, (self.W - 4) - box[2]), 4 - box[0]), max(0.0, 4 - box[1]))
+        # Clear of every bubble placed before this one, tail room included: up
+        # if there is room above, else to the right, else to the left.
+        room = 6          # between outlines; each 2 px stroke spills a pixel or two
+        for _ in range(12):
+            hit = [b for b in self._bubbles if box[0] < b[2] + room and b[0] < box[2] + room
+                   and box[1] < b[3] + room and b[1] < box[3] + cap + room]
+            if not hit:
+                break
+            up = box[3] + cap + room - min(b[1] for b in hit)
+            right = max(b[2] for b in hit) + room - box[0]
+            left = box[2] + room - min(b[0] for b in hit)
+            if box[1] - up >= 4:
+                shift(0, -up)
+            elif box[2] + right <= self.W - 4:
+                shift(right, 0)
+            elif box[0] - left >= 4:
+                shift(-left, 0)
+            else:
+                break
+        self.canvas.coords(t, x + (box[0] + padx - bb[0]), y + (box[1] + pady - bb[1]))
+        # The tail leaves the bottom edge as near over him as it can and points
+        # at him, stopping short when the bubble has had to move away.
+        r = min(fs * .8, (box[3] - box[1]) / 2)
+        half = max(3.0, 4 * S)
+        lo, hi = box[0] + r + half, box[2] - r - half
+        base = clamp(hx, lo, hi) if lo <= hi else (box[0] + box[2]) / 2
+        ddx, ddy = hx - base, max(3.0, top - 1 - box[3])
+        n = math.hypot(ddx, ddy)
+        reach = clamp(n, 3.0, cap)
+        tip = (base + ddx / n * reach, box[3] + ddy / n * reach)
+        # A bubble moved aside points back past its neighbour: stop the tail
+        # short of that neighbour rather than poke it.
+        while reach > 3 and any(b[0] - room < tip[0] < b[2] + room and
+                                b[1] - room < tip[1] < b[3] + room for b in self._bubbles):
+            reach = max(3.0, reach - 1)
+            tip = (base + ddx / n * reach, box[3] + ddy / n * reach)
+        self._bubbles.append((min(box[0], tip[0]), box[1], max(box[2], tip[0]), box[3] + cap))
+        # the box layer is raised before the text layer, so it lands behind
+        self.layer(tob)
+        self._plate(box[0], box[1], box[2], box[3], r, "#0C1024", col, 2,
+                    tail=(base - half, base + half) + tip)
 
     # ==================================================================
     #  loop
@@ -7791,6 +8170,7 @@ class App:
 
         win.protocol("WM_DELETE_WINDOW", self.close_performance)
         refresh()
+        dress_window(win)
 
     def close_performance(self):
         if getattr(self, "performance_after", None) is not None:

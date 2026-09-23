@@ -128,7 +128,10 @@ class ProfilesPanel:
         self.kind.trace_add("write", self.choose)
         for row, (label, variable) in enumerate((("Nickname", self.nickname), ("Halo colour (#RRGGBB)", self.color)), 1):
             tk.Label(form, text=label, bg=bg, fg=fg).grid(row=row, column=0, sticky="w")
-            tk.Entry(form, textvariable=variable, width=25).grid(row=row, column=1, sticky="w", padx=8)
+            tk.Entry(form, textvariable=variable, width=25, bg="#0E1120", fg=fg,
+                     insertbackground=fg, relief="flat", highlightthickness=1,
+                     highlightbackground="#2A3150", highlightcolor="#8FA0CC").grid(
+                         row=row, column=1, sticky="w", padx=8, pady=1)
         tk.Label(form, text="Hat", bg=bg, fg=fg).grid(row=3, column=0, sticky="w")
         ttk.Combobox(form, textvariable=self.hat, values=HATS, state="readonly", width=22).grid(row=3, column=1, padx=8)
         tk.Checkbutton(parent, text="Use this character's default weapons", variable=self.defaults,

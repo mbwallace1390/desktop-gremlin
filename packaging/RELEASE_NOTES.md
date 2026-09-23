@@ -1,49 +1,61 @@
-Desktop Gremlin 3.2.2 fixes a defect that permanently switched off the
-friendship half of the cast's behaviour, and repairs several smaller problems.
+Desktop Gremlin 3.3.0 fixes several things that were drawn wrong, and tidies
+the look of the gremlins, their speech and the Settings window.
 
 Choose the download for your computer under Assets:
 
-- Windows 10/11 x64: download DesktopGremlin-3.2.2-Windows-x64.zip, extract it,
+- Windows 10/11 x64: download DesktopGremlin-3.3.0-Windows-x64.zip, extract it,
   and run DesktopGremlin.exe.
 - Linux x64 with an X11 desktop and glibc 2.35+: download
-  DesktopGremlin-3.2.2-Linux-x64.tar.gz, extract it, and run DesktopGremlin.
+  DesktopGremlin-3.3.0-Linux-x64.tar.gz, extract it, and run DesktopGremlin.
   Ubuntu 22.04/24.04 Xorg sessions meet this baseline.
 
 Python, Tk and the required application libraries are included. No separate
 Python, pip or FUSE installation is needed. Keep the _internal folder beside
 the executable. GitHub's Source code archives are for developers.
 
-Grudges now wear off:
+Drawn right:
 
-- Relationship scores only ever fell. Every landed hit deepened a grudge, no
-  decay ever pulled one back, and the graph is saved between runs. Measured
-  over twenty simulated minutes from an empty memory: 1171 falls against 2
-  rises, with fourteen of fifteen pairs stuck at the minimum by minute eight.
-- Rescues, alliances and the quiet group scenes all require a neutral or
-  positive score, so once a pair bottomed out those behaviours were locked out
-  for good, and only "Make them forget everything about me" cleared it.
-- A fight now deepens a grudge once every few seconds rather than once per
-  landed blow, and fighting alone can no longer drive a pair past a fixed
-  rivalry bound however long it goes on. Scores also fade back toward neutral
-  as a run continues: grudges quickly, friendships slowly. Rivalries still
-  form during sustained fighting; they can now be got over.
-- Saved grudges from earlier versions thaw on their own over the first few
-  minutes of a run. No settings or memory file needs to be deleted.
-- Group scenes remain uncommon, because they need the cast idle to start. This
-  release removes the permanent lockout; it does not make them frequent.
+- Hovering over a gremlin printed two names on top of each other, "the zealot"
+  and "Zealot", so neither could be read. There is now one name tag, centred
+  under the gremlin and kept on the screen, showing its nickname.
+- The bow was drawn as a near-closed ring around the fist. It is now held by
+  its grip, with the string drawn back to the other hand and an arrow nocked
+  until the shot; the arrow leaves from the grip.
+- A speech bubble's tail was about three pixels long at the default size, so
+  it could not be seen, and two gremlins talking side by side covered each
+  other's words. The tail now points at whoever is talking, a bubble that
+  would overlap another moves clear of it (the one already showing stays
+  put), bubbles no longer hide the speaker's health bar, and a gremlin
+  spinning through the air no longer takes his bubble round with him.
+- A large gremlin could only be picked up round the middle: the grab reach was
+  the same 62 pixels at every size. It now grows with gremlins above size 1.24,
+  as do the hover rings, so a big one can be grabbed by the head or the feet.
+  Nothing changes at the default size.
+- Playground toys printed a small caption ("SEESAW", "RAMP") onto the desktop
+  under each one. They no longer do.
 
-Also in this update:
+Looks better:
 
-- An unrecognised command-line option now reports itself when Desktop Gremlin
-  is started without a console, instead of exiting silently.
-- The Windows startup-entry helper no longer leaks a registry handle when
-  writing that entry fails.
-- The Performance panel rejects a non-finite simulation-step count.
-- Passive limb geometry clamps its squash factor rather than relying on every
-  caller to stay in range.
-- The check runner now reports how many tests were skipped rather than
-  counting a skipped check as a full pass, and the per-push continuous
-  integration run uses the same Python version the downloads are built with.
+- Sleeping gremlins snore: small z's drift up from their heads.
+- Windows: speech bubbles are rounded, and a name's letters get a dark
+  outline so a pale name reads on a light wallpaper without a plate that would
+  catch clicks meant for your desktop.
+- Windows: Settings is dark throughout. The tabs, drop-down lists and text
+  boxes match the window, the Cast tab lost its grey borders, and Settings
+  and Performance show the gremlin icon in a dark title bar.
+- Windows: the tray icon is drawn at exactly the size your display scaling
+  asks for, whatever it is, with a dark edge that keeps it visible on a light
+  taskbar. The program icon now carries sizes from 16 to 256 pixels for
+  shortcuts, the taskbar and File Explorer.
+
+On Linux, the X11 overlay only shapes lines, ovals, rectangles and text, so
+speech bubbles stay rectangular there, names keep their label plate, and the
+Linux theme of the Settings tabs is unchanged.
+
+Drawing costs about the same. On the development machine a fixed scene of ten
+gremlins, four talking, one hovered, one asleep and one fighting took 2.95 ms
+to draw and paint per frame, against 2.72 ms for 3.2.2, out of a 25 ms frame;
+the hovered gremlin's outlined name is most of the difference.
 
 The 3.2 physics choices, weapons, friendships, group scenes, parkour, profiles
 and Peaceful/Mischief/Battle modes remain available. Existing saved settings
@@ -51,8 +63,8 @@ are reused. To update, quit the old copy and extract the new download into a
 fresh folder. If automatic startup is enabled, open Settings in the new copy
 and choose Apply before removing the old folder.
 
-The 3.2.1 performance work is unchanged and still applies. See
-[the full measurements and verification](https://github.com/mbwallace1390/desktop-gremlin/blob/v3.2.2/docs/PERFORMANCE.md).
+The 3.2.1 performance work and the 3.2.2 relationship fixes still apply. See
+[the full performance measurements and verification](https://github.com/mbwallace1390/desktop-gremlin/blob/v3.3.0/docs/PERFORMANCE.md).
 
 Linux gremlins interact with the actual X11 desktop and compatible application
 windows. The Linux build does not support Wayland, ARM or moving desktop icons.

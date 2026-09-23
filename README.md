@@ -5,6 +5,16 @@ Windows supports Explorer icons and open windows. Linux X11 supports open
 windows and the desktop floor, including climbing, dragging gremlins and
 optional window nudges with restoration.
 
+**3.3.0 looks:** fixes to what was drawn wrong, and a tidier look. Hovering a
+gremlin showed two names printed over each other; now one name tag. The bow was
+drawn as a ring round the fist; now it is held by its grip, drawn and nocked.
+Speech bubbles had a tail too short to see and covered each other when two
+talked at once; now each points at its speaker and moves clear of the other.
+Large gremlins could only be grabbed round the middle; the grab reach and rings
+now grow with them. Toys no longer print captions, and sleepers snore. On
+Windows the bubbles are rounded, names are outlined, Settings is dark
+throughout, and the tray icon is drawn at exactly your display's scaling.
+
 **3.2.2 fixes:** grudges now wear off. Relationship scores only ever fell —
 every landed hit deepened one, nothing ever pulled it back, and the score is
 saved, so within about ten minutes of play every pair sat at the floor and
@@ -68,7 +78,7 @@ install no Python or pip packages. Linux needs an x64 glibc desktop compatible
 with Ubuntu 22.04 or newer and an X11 session.
 
 1. Open [GitHub Releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
-2. Under the release's **Assets**, download **DesktopGremlin-3.2.2-Windows-x64.zip**.
+2. Under the release's **Assets**, download **DesktopGremlin-3.3.0-Windows-x64.zip**.
 3. Right-click the ZIP, choose **Extract All**, then open the extracted folder.
 4. Double-click **DesktopGremlin.exe**. Keep its `_internal` folder beside it.
 
@@ -76,7 +86,7 @@ Choose the executable archive under the release's Assets. GitHub's **Source code
 downloads are for developers.
 See [the download guide](USER_DOWNLOAD_GUIDE.md) for updating and uninstalling.
 
-On Linux, download **DesktopGremlin-3.2.2-Linux-x64.tar.gz**, extract it, and
+On Linux, download **DesktopGremlin-3.3.0-Linux-x64.tar.gz**, extract it, and
 open **DesktopGremlin** inside the extracted folder. Keep `_internal` beside
 it. A small control window provides Settings, Performance, Pause, Bring them
 to my cursor, Put my windows back, and Quit. Right-click a gremlin to show it.
@@ -479,7 +489,7 @@ screenshot.
 python tests\run_all.py
 ```
 
-51 checks on Windows; the Linux runner selects shared and Linux checks.
+52 checks on Windows; the Linux runner selects shared and Linux checks.
 Linux acceptance requires an isolated Xvfb session as documented in the Linux
 build guide. Frozen Linux acceptance also proves real input delivery and exit
 using a separate receiver process.

@@ -53,6 +53,7 @@ CHECKS = [
     ("behavior_recovery", "test_behavior_recovery.py", "first landings and delayed-shot ownership"),
     ("engine_upgrade", "test_engine_upgrade.py", "fixed timing, window tracking and routes"),
     ("visual_upgrade", "test_visual_upgrade.py", "pose transitions, contrast and impacts"),
+    ("polish", "test_polish.py", "name tags, bows, bubbles, icons, Settings"),
     ("performance_upgrade", "test_performance_upgrade.py", "adaptive effects and live measurements"),
     ("renderer", "test_renderer.py", "native quarantine and Tk compatibility"),
     ("audit_settings", "test_audit_settings.py", "settings failures and test isolation"),
@@ -100,7 +101,8 @@ def main(argv):
     wanted = [a for a in argv if not a.startswith("-")]
     windows_only = {"frozen_runtime", "input_recovery", "desktop_recovery", "renderer",
                     "audit_shell", "audit_runtime", "diagnostics", "runtime",
-                    "performance_upgrade", "icon_performance", "audit_settings", "settings", "icons"}
+                    "performance_upgrade", "icon_performance", "audit_settings", "settings", "icons",
+                    "polish"}
     available = [c for c in CHECKS if sys.platform != "linux" or c[0] not in windows_only]
     if sys.platform == "linux" and os.environ.get("GREMLIN_ISOLATED_X11") != "1":
         print("Run Linux acceptance on isolated Xvfb with GREMLIN_ISOLATED_X11=1.")

@@ -53,8 +53,8 @@ authorizing their publication:
 
 1. Commit and push the reviewed source, packaging files, app.ico and workflow.
 2. Check that desktop_gremlin.py declares the intended VERSION, then create and
-   push its matching tag, for example `git tag v3.2.2` followed by
-   `git push origin v3.2.2`. The tag must point at the reviewed source commit.
+   push its matching tag, for example `git tag v3.3.0` followed by
+   `git push origin v3.3.0`. The tag must point at the reviewed source commit.
 3. Wait for **Build Windows and Linux downloads** in GitHub Actions. Both native
    builds require source tests, executable smoke tests and archive checks to
    pass before one draft release is created. A manual run produces workflow

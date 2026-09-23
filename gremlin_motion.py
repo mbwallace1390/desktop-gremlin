@@ -940,8 +940,8 @@ class MotionEngine:
                     px = left + ((i / 6 + prop["phase"] / (math.pi * 12)) % 1) * w
                     app.line((px - 3, top + h * .2, px + 3, top + h * .5,
                               px - 3, top + h * .8), PAPER, 1)
-            app.text(left - app.ox - app.sx, y + 10 - app.oy - app.sy,
-                     kind.upper(), INK, ("Segoe UI", 6))
+            # No caption: a 6pt "SEESAW" under every toy read as debug text on
+            # the desktop, and the drawing already says what each one is.
         for f, action in self.actions.items():
             if f.state != "parkour":
                 continue

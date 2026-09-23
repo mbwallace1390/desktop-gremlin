@@ -28,7 +28,7 @@ jobs:
         shell: pwsh
         run: ./scripts/build_windows.ps1 -Python python
       - name: Preserve Windows download and integrity files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DesktopGremlin-download-Windows-x64
           path: |
@@ -38,7 +38,7 @@ jobs:
           if-no-files-found: error
       - name: Preserve Windows smoke-test evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DesktopGremlin-evidence-Windows
           path: build/windows/packaged-self-test.json
@@ -71,7 +71,7 @@ jobs:
             bash scripts/build_linux.sh
           '
       - name: Preserve Linux download and integrity files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DesktopGremlin-download-Linux-x64
           path: |
@@ -81,7 +81,7 @@ jobs:
           if-no-files-found: error
       - name: Preserve Linux smoke-test evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DesktopGremlin-evidence-Linux
           path: |
@@ -98,7 +98,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: DesktopGremlin-download-*
           path: release

@@ -67,17 +67,42 @@ def serialize_canvas(app):
                 output.append('<rect x="%s" y="%s" width="%s" height="%s" %s/>' %
                               (number(min(x0, x1)), number(min(y0, y1)),
                                number(abs(x1 - x0)), number(abs(y1 - y0)), style))
+        elif kind == "polygon":
+            # Tk's smooth polygon: quadratic pieces between the midpoints of
+            # consecutive points, each point the control of its piece. A point
+            # given twice is a sharp corner, which this reproduces exactly.
+            pts = [(coords[i], coords[i + 1]) for i in range(0, len(coords), 2)]
+
+            def mid(a, b):
+                return number((a[0] + b[0]) / 2) + "," + number((a[1] + b[1]) / 2)
+            if canvas.itemcget(item, "smooth") in ("1", "true", "bezier"):
+                path = ["M" + mid(pts[-1], pts[0])]
+                for i, p in enumerate(pts):
+                    path.append("Q%s,%s %s" % (number(p[0]), number(p[1]),
+                                               mid(p, pts[(i + 1) % len(pts)])))
+            else:
+                path = ["M%s,%s" % (number(pts[0][0]), number(pts[0][1]))]
+                path += ["L%s,%s" % (number(x), number(y)) for x, y in pts[1:]]
+            output.append('<path d="%sZ" fill="%s" stroke="%s" stroke-width="%s" '
+                          'stroke-linejoin="round"/>' %
+                          (" ".join(path), escape(fill),
+                           escape(canvas.itemcget(item, "outline") or "none"),
+                           number(float(canvas.itemcget(item, "width")))))
         elif kind == "text":
             font = tkinter.font.Font(root=app.root, font=canvas.itemcget(item, "font")).actual()
+            # Match "center" exactly: its letters are not compass points.
             anchor = canvas.itemcget(item, "anchor")
-            align = "middle" if anchor == "center" else "end" if "e" in anchor else "start"
+            anchor = "" if anchor == "center" else anchor
+            align = "end" if "e" in anchor else "start" if "w" in anchor else "middle"
+            baseline = ("text-before-edge" if "n" in anchor else
+                        "text-after-edge" if "s" in anchor else "central")
             px = app.root.winfo_fpixels("1i") * abs(font["size"]) / 72
             output.append('<text x="%s" y="%s" fill="%s" font-family="%s" '
                           'font-size="%s" font-weight="%s" text-anchor="%s" '
-                          'dominant-baseline="central">%s</text>' %
+                          'dominant-baseline="%s">%s</text>' %
                           (number(coords[0]), number(coords[1]), escape(fill),
                            escape(font["family"]), number(px), font["weight"], align,
-                           escape(canvas.itemcget(item, "text"))))
+                           baseline, escape(canvas.itemcget(item, "text"))))
         else:
             raise AssertionError("Unsupported visible Canvas primitive: " + str(kind))
     assert output and counts["line"] > 20 and counts["oval"] > 5

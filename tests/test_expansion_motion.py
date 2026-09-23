@@ -302,9 +302,9 @@ def drawing_coordinates():
         box = next(i for i in drawn if app.canvas.type(i) == "rectangle")
         coords = app.canvas.coords(box)
         assert 480 < coords[0] < 500 and 750 < coords[1] < 765, "prop world offset is wrong"
-        label = next(i for i in drawn if app.canvas.type(i) == "text")
-        coords = app.canvas.coords(label)
-        assert 480 < coords[0] < 500 and 805 < coords[1] < 815, "label received world coordinates"
+        # Toys used to carry a 6pt caption ("CRATE"), which this checked for
+        # world coordinates; the caption is gone, and must stay gone.
+        assert not any(app.canvas.type(i) == "text" for i in drawn), "toy printed a caption"
     finally:
         app.ox, app.oy = 0, 0
         app.mons = [((0, 0, 1600, 900), (0, 0, 1600, 860))]

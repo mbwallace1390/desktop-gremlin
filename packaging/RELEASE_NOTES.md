@@ -63,7 +63,26 @@ are reused. To update, quit the old copy and extract the new download into a
 fresh folder. If automatic startup is enabled, open Settings in the new copy
 and choose Apply before removing the old folder.
 
-The 3.2.1 performance work and the 3.2.2 relationship fixes still apply. See
+Also new if you are coming from 3.2.1. Version 3.2.2 was never published on
+its own, so its fixes arrive with this release:
+
+- Grudges now wear off. Relationship scores used to only ever fall: every
+  landed hit deepened a grudge, nothing pulled one back, and the scores are
+  saved between runs. Within about ten minutes of play every pair was stuck at
+  the minimum for good, which locked out rescues, alliances and the quiet group
+  scenes, and only "Make them forget everything about me" cleared it.
+- A fight now deepens a grudge once every few seconds instead of once per
+  blow, fighting alone can no longer push a pair past a fixed rivalry bound,
+  and scores fade back toward neutral as a run goes on: grudges quickly,
+  friendships slowly. Rivalries still form, and can now be got over.
+- Grudges saved by an earlier version thaw on their own over the first few
+  minutes of a run; nothing needs deleting. Group scenes are still uncommon,
+  because they need the cast idle, but they are no longer locked out.
+- An unrecognised command-line option now says so when Desktop Gremlin runs
+  without a console, instead of exiting silently, and a failed Windows startup
+  entry no longer leaks a registry handle.
+
+The 3.2.1 performance work still applies. See
 [the full performance measurements and verification](https://github.com/mbwallace1390/desktop-gremlin/blob/v3.3.0/docs/PERFORMANCE.md).
 
 Linux gremlins interact with the actual X11 desktop and compatible application

@@ -51,6 +51,12 @@ def graph_of(gm):
     return gm.MEM["relationships"]
 
 
+def pin_desktop(gm):
+    # Keep geometry fixed for construction AND later environment refreshes.
+    gm.virtual_screen = lambda: (0, 0, 1280, 800)
+    gm.monitors = lambda: [((0, 0, 1280, 800), (0, 0, 1280, 760))]
+
+
 def play(gm, app, seed, minutes):
     """Run the real app and report (scores, positive pairs, grudge charges)."""
     charges = [0]
@@ -73,12 +79,13 @@ def play(gm, app, seed, minutes):
 # --- 1 and 2. ordinary play, scenes on and off, several seeds --------------
 # Sweeping matters: an earlier draft asserted that a positive bond fired at
 # least once in six minutes, which held on seed 31 and failed on 2, 3, 7 and 99.
-# Scenes are rare by design -- they need the cast idle -- so that was the check
-# being wrong about the system, not the system being broken.
+# Open-ended play need not finish a positive scene on every seed. A separate
+# driven bout in test_social_pacing proves that recovery can earn a friendship.
 for scenes in (True, False):
     for seed in (2, 7, 31, 99):
         gm = harness.load("social_decay", crowd=6, group_scenes=scenes,
                           play_mode="mischief", chaos=1.0)
+        pin_desktop(gm)
         app = harness.build(gm)
         harness.fake_terrain(app, [("Icon %d" % i, 60 + (i % 8) * 120,
                                     200 + (i // 8) * 150, 124 + (i % 8) * 120,
@@ -98,24 +105,22 @@ for scenes in (True, False):
                            "healthy one" % (label, len(scores)))
             if scores and worst <= FLOOR:
                 bad.append("%s: worst pair %.1f is at the floor" % (label, worst))
-            # The other direction: decay strong enough to hold everyone near
-            # zero means a rivalry can never form. _advance reads < -15.
-            if scores and worst > -15:
+            # With scenes off, excessive decay must not erase all rivalries.
+            # With scenes on, completed quiet scenes can legitimately offset
+            # those hits; section 3 proves the hit mechanism can form a rivalry.
+            if not scenes and scores and worst > -15:
                 bad.append("%s: worst pair only %.1f, so no rivalry can form "
                            "(_advance wants < -15)" % (label, worst))
-            # Nothing here asserts on a magnitude between those two bounds.
-            # `App` reads the real screen -- harness does not pin it -- so how
-            # often anyone meets anyone else moves with the desktop size: seed
-            # 31 scenes-off measured -41.6 here and -62.8 on a 1280x800 CI
-            # runner, against -70.0 for a dead interval gate. A threshold placed
-            # between those overlaps the healthy spread. The gate is checked
-            # directly instead, in section 6.
+            # The desktop is fixed above, but incidental fights still aren't
+            # the interval's acceptance boundary. Check that mechanism with a
+            # directly driven sequence in section 6.
         finally:
             harness.teardown(gm, app)
 
 # --- 3, 4, 5. the mechanisms, driven directly -----------------------------
 gm = harness.load("social_decay", crowd=6, group_scenes=True,
                   play_mode="mischief")
+pin_desktop(gm)
 app = harness.build(gm)
 harness.fake_terrain(app, [("Icon %d" % i, 60 + i * 120, 200,
                             124 + i * 120, 264, i) for i in range(8)])
@@ -189,6 +194,22 @@ try:
     if marks[0] == 0:
         bad.append("the fade never marked memory dirty, so quitting would save "
                    "the grudge the run had already let go of")
+
+    # Positive relationships must outlast grudges: at thirty minutes +80 is
+    # about +40, still a friendship rather than a forgotten score. Drive the
+    # real update clock with scenes off so no scene can add a replacement bond.
+    graph.clear()
+    graph[key] = 80.0
+    gm.CFG["group_scenes"] = False
+    start = social.time
+    while social.time - start < 1800:
+        social.update(.25)
+    warmed = graph.get(key, 0.0)
+    gm.CFG["group_scenes"] = True
+    print("thirty quiet minutes: +80.0 faded to %.1f" % warmed)
+    if not 39.9 <= warmed <= 40.1:
+        bad.append("positive friendship faded to %.1f after thirty minutes, "
+                   "expected half of +80" % warmed)
 
     # 5. the number of grudge steps follows elapsed time, not hit count. Both
     # spacings are literals: 0.1s is well inside any sane interval and 20s well

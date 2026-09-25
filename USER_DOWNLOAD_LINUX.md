@@ -2,7 +2,7 @@ Desktop Gremlin for Linux
 =========================
 
 1. Open [Desktop Gremlin releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
-2. Under Assets, download DesktopGremlin-3.3.0-Linux-x64.tar.gz.
+2. Under Assets, download DesktopGremlin-3.3.1-Linux-x64.tar.gz.
 3. Right-click the archive and choose Extract Here, then open its DesktopGremlin folder.
 4. Double-click DesktopGremlin. If your file manager asks, choose Run.
 
@@ -24,6 +24,12 @@ Use the small Desktop Gremlin control window for Settings, Pause, Bring them to
 my cursor, Put my windows back and Quit. Right-clicking a gremlin opens the same
 menu. Ctrl+Alt+Shift+Q also quits when available; the control window shows its
 availability. No terminal is needed during normal use.
+
+Version 3.3.1 keeps crowded speech readable near the top of the screen and makes
+Settings fit small screens and large fonts. Its controls scroll while Apply
+and Close stay visible. In Mischief mode with group scenes enabled, short breaks
+between fights give shared activities a chance to start. Battle mode keeps its
+existing pace. Your saved settings and memory are reused.
 
 Version 3.3.0 fixes things that were drawn wrong. Hovering a gremlin now shows
 one name instead of two printed over each other. The bow is held by its grip

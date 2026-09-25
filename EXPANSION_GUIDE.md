@@ -74,6 +74,12 @@ rivalry is something they can get over. Relationships influence opponent
 choice. Pair scores persist between runs under stable character identities,
 even when nicknames change or a character temporarily leaves the cast.
 
+In Mischief mode with group scenes enabled, a long bout or a knockout opens a
+short recovery opportunity. Once grounded and free, the gremlins can share a
+quiet activity before choosing another opponent. Existing shots still hit,
+grabs and other activities keep control, and friendships are earned by scenes.
+Battle mode and play with group scenes disabled keep their existing pace.
+
 | Activity | What makes it observable |
 |---|---|
 | Alliance | Two characters meet, wear matching green bands and focus on their common strongest target. Friendly fire breaks the pact. |

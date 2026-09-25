@@ -2,7 +2,7 @@ Desktop Gremlin for Windows
 ==========================
 
 1. Open [Desktop Gremlin releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
-2. Under Assets, download DesktopGremlin-3.3.0-Windows-x64.zip.
+2. Under Assets, download DesktopGremlin-3.3.1-Windows-x64.zip.
 3. Right-click the ZIP and choose Extract All.
 4. Open the extracted DesktopGremlin folder and double-click DesktopGremlin.exe.
 
@@ -12,6 +12,12 @@ DesktopGremlin.exe. The GitHub "Source code" downloads are for developers.
 The gremlins appear on your desktop. Open the system tray arrow near the clock
 and right-click the Desktop Gremlin icon for Settings, Pause and Quit. You can
 also quit with Ctrl+Alt+Shift+Q. Normal use has no command window.
+
+Version 3.3.1 keeps crowded speech readable near the top of the screen and makes
+Settings fit small screens and large fonts. Its controls scroll while Apply
+and Close stay visible. In Mischief mode with group scenes enabled, short breaks
+between fights give shared activities a chance to start. Battle mode keeps its
+existing pace. Your saved settings and memory are reused.
 
 Version 3.3.0 fixes things that were drawn wrong and tidies the look. Hovering a
 gremlin now shows one name instead of two printed over each other. The bow is

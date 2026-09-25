@@ -27,6 +27,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # name -> file, in rough order of how fast they are
 CHECKS = [
+    ("runner", "test_runner.py", "requested checks and options are validated"),
     ("motion_performance", "test_motion_performance.py", "cached geometry and sleeping support invalidation"),
     ("collision_performance", "test_collision_performance.py", "indexed sweeps preserve exact collisions"),
     ("icon_performance", "test_icon_performance.py", "cached recovery and bounded frame I/O"),
@@ -48,12 +49,15 @@ CHECKS = [
     ("expansion_motion", "test_expansion_motion.py", "parkour, planes, ropes and toys"),
     ("expansion_social", "test_expansion_social.py", "relationships and coordinated scenes"),
     ("social_decay", "test_social_decay.py", "grudges form, then wear off again"),
+    ("social_pacing", "test_social_pacing.py", "social scenes get time to develop"),
     ("input_recovery", "test_input_recovery.py", "Tk-only startup and keyboard escape"),
     ("desktop_recovery", "test_desktop_recovery.py", "backup coverage and retryable window undo"),
     ("behavior_recovery", "test_behavior_recovery.py", "first landings and delayed-shot ownership"),
     ("engine_upgrade", "test_engine_upgrade.py", "fixed timing, window tracking and routes"),
     ("visual_upgrade", "test_visual_upgrade.py", "pose transitions, contrast and impacts"),
     ("polish", "test_polish.py", "name tags, bows, bubbles, icons, Settings"),
+    ("speech_layout", "test_speech_layout.py", "crowded speech remains readable"),
+    ("settings_layout", "test_settings_layout.py", "settings controls fit small screens"),
     ("performance_upgrade", "test_performance_upgrade.py", "adaptive effects and live measurements"),
     ("renderer", "test_renderer.py", "native quarantine and Tk compatibility"),
     ("audit_settings", "test_audit_settings.py", "settings failures and test isolation"),
@@ -98,20 +102,30 @@ def skipped(proc):
 
 def main(argv):
     verbose = "-v" in argv or "--verbose" in argv
+    unknown_options = [a for a in argv if a.startswith("-") and a not in ("-v", "--verbose")]
+    if unknown_options:
+        print("unknown option: %s" % ", ".join(unknown_options))
+        print("supported options: -v, --verbose")
+        return 2
     wanted = [a for a in argv if not a.startswith("-")]
     windows_only = {"frozen_runtime", "input_recovery", "desktop_recovery", "renderer",
                     "audit_shell", "audit_runtime", "diagnostics", "runtime",
-                    "performance_upgrade", "icon_performance", "audit_settings", "settings", "icons",
-                    "polish"}
+                    "performance_upgrade", "icon_performance", "audit_settings", "settings", "icons"}
     available = [c for c in CHECKS if sys.platform != "linux" or c[0] not in windows_only]
+    known = {c[0] for c in CHECKS}
+    unknown = [name for name in wanted if name not in known]
+    unavailable = [name for name in wanted if name in known and name not in {c[0] for c in available}]
+    if unknown or unavailable:
+        if unknown:
+            print("no such check: %s" % ", ".join(unknown))
+        if unavailable:
+            print("check unavailable on %s: %s" % (sys.platform, ", ".join(unavailable)))
+        print("available: %s" % ", ".join(c[0] for c in available))
+        return 2
     if sys.platform == "linux" and os.environ.get("GREMLIN_ISOLATED_X11") != "1":
         print("Run Linux acceptance on isolated Xvfb with GREMLIN_ISOLATED_X11=1.")
         return 2
     picked = [c for c in available if not wanted or c[0] in wanted]
-    if wanted and not picked:
-        print("no such check: %s" % ", ".join(wanted))
-        print("available: %s" % ", ".join(c[0] for c in CHECKS))
-        return 2
 
     src = os.environ.get("GREMLIN_SRC")
     if src:

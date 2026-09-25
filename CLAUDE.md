@@ -24,8 +24,9 @@ Quit hides the overlay first and must finish teardown even if cleanup fails.
 python tests\run_all.py
 ```
 
-52 checks on Windows; `tests/run_all.py` selects the shared and Linux subset
-on Linux. Linux tests require isolated Xvfb and `GREMLIN_ISOLATED_X11=1`.
+56 checks on Windows; `tests/run_all.py` selects 43 shared and Linux checks
+on Linux. Both run on pushes/PRs. Linux tests require isolated Xvfb and
+`GREMLIN_ISOLATED_X11=1`.
 Production never synthesizes input. `gremlin_x11_probe.py` is an opt-in source
 and frozen acceptance helper that uses a separate receiver process and proves
 mouse delivery, dragging/release and the global emergency shortcut.
@@ -65,8 +66,8 @@ diagnostic entry exists before invoking it. The release gate strips Python
 from PATH and verifies all module origins are inside the frozen bundle.
 Each one guards a concrete failure. They build a real Tk window and a real `App`, so windows
 flash on screen while they run; none of them touch your desktop icons, because
-the shell is stubbed out. `.github/workflows/checks.yml` runs the same command
-on every push, on a Windows runner.
+the shell is stubbed out. `.github/workflows/checks.yml` runs the platform's
+selected checks on every push and PR, on Windows and isolated Linux Xvfb.
 
 **Every check starts through `tests/harness.py`.** `harness.load(tag)` imports
 the script and redirects all five files it persists to — settings, icon
@@ -335,6 +336,19 @@ runs on Linux CI.
 window. Pooling items instead of recreating them was worth 1.14x. More
 particles and more fighters are the two things you cannot buy.
 
+**Crowded speech needs a global free gap.** Repeated left/right pushes can
+oscillate between occupied positions even with space on the other side. Speech
+placement searches gaps at the finite set of earlier bubble edges, keeping old
+messages in place. `test_speech_layout.py` reads the actual painted bounds for
+three through ten speakers across screen edges and sizes. The shared polish and
+speech checks run on actual isolated X11 as well as Windows.
+
+**Settings scrolls; actions do not.** Reserve its footer before packing the
+notebook. Each tab has its own scrollable controls, and initial size is capped to
+the pointer's monitor work area. Keyboard focus reveals controls automatically.
+Keep immediately withdrawn self-test windows withdrawn. `test_settings_layout.py`
+drives enlarged fonts and small client areas, including every tab's footer.
+
 ## Design decisions worth not relitigating
 
 **Memory holds counters, never a log.** `gremlin_memory.json` keeps fight and
@@ -372,11 +386,17 @@ them off. Nothing in the suite covered it, because `harness.QUIET` sets
 `group_scenes: False` for every legacy check and the new check had opted into
 `True`. It now sweeps both, over four seeds each.
 
-**Positive bonds are rare, and that is not this bug.** Even fixed, a six-minute
+**Positive bonds were rare after decay alone.** Even fixed, a six-minute
 mischief run at crowd six records 0–1 positive bond events: every one is gated
 behind `_available()`, which needs idle/walk/taunt. Do not write a check that
 asserts one fired — an earlier draft did, and it passed on seed 31 and failed on
-2, 7 and 99. Say "the lockout is gone", not "friendships now happen".
+2, 7 and 99. The later pacing change opens bounded recovery opportunities in
+Mischief with group scenes on: fight bouts get a break at safe grounded decision
+boundaries, and nearby free actors can share quiet scenes. It never changes
+scores directly or cancels grabs, attacks, flight, rides or knockouts. Battle
+and scenes-off retain their pace. `test_social_pacing.py` proves a driven real
+bout earns a bond from a completed scene; random play need not do so every seed.
+`test_social_decay.py` now pins monitor geometry and checks positive half-life too.
 
 **`harness` does not pin the screen, so anything the sim does over minutes is
 machine-dependent.** `App` reads the real desktop, and how often anyone meets

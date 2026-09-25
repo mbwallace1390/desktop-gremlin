@@ -5,6 +5,13 @@ Windows supports Explorer icons and open windows. Linux X11 supports open
 windows and the desktop floor, including climbing, dragging gremlins and
 optional window nudges with restoration.
 
+**3.3.1 fixes:** crowded speech stays readable, including near the top of the
+screen. Settings fits small screens and large fonts: controls scroll while
+Apply and Close remain visible. In Mischief mode with group scenes enabled,
+fights leave short recovery opportunities for shared activities. Battle mode
+keeps its existing pace. Test requests now reject typos, Linux checks run on
+every push and pull request, and the playground preview shows its missing swing.
+
 **3.3.0 looks:** fixes to what was drawn wrong, and a tidier look. Hovering a
 gremlin showed two names printed over each other; now one name tag. The bow was
 drawn as a ring round the fist; now it is held by its grip, drawn and nocked.
@@ -78,7 +85,7 @@ install no Python or pip packages. Linux needs an x64 glibc desktop compatible
 with Ubuntu 22.04 or newer and an X11 session.
 
 1. Open [GitHub Releases](https://github.com/mbwallace1390/desktop-gremlin/releases).
-2. Under the release's **Assets**, download **DesktopGremlin-3.3.0-Windows-x64.zip**.
+2. Under the release's **Assets**, download **DesktopGremlin-3.3.1-Windows-x64.zip**.
 3. Right-click the ZIP, choose **Extract All**, then open the extracted folder.
 4. Double-click **DesktopGremlin.exe**. Keep its `_internal` folder beside it.
 
@@ -86,7 +93,7 @@ Choose the executable archive under the release's Assets. GitHub's **Source code
 downloads are for developers.
 See [the download guide](USER_DOWNLOAD_GUIDE.md) for updating and uninstalling.
 
-On Linux, download **DesktopGremlin-3.3.0-Linux-x64.tar.gz**, extract it, and
+On Linux, download **DesktopGremlin-3.3.1-Linux-x64.tar.gz**, extract it, and
 open **DesktopGremlin** inside the extracted folder. Keep `_internal` beside
 it. A small control window provides Settings, Performance, Pause, Bring them
 to my cursor, Put my windows back, and Quit. Right-click a gremlin to show it.
@@ -489,14 +496,16 @@ screenshot.
 python tests\run_all.py
 ```
 
-52 checks on Windows; the Linux runner selects shared and Linux checks.
+56 checks on Windows; the Linux runner selects 43 shared and Linux checks.
+Both platforms run on pushes and pull requests. Linux uses an isolated Xvfb
+desktop, including the shared visual checks; Windows-only checks stay on Windows.
 Linux acceptance requires an isolated Xvfb session as documented in the Linux
 build guide. Frozen Linux acceptance also proves real input delivery and exit
 using a separate receiver process.
 They drive the real app
 with the Windows shell stubbed out, so they never touch your desktop. Every one
-of them checks a concrete behavior or regression. The same checks run on every push
-in GitHub Actions, on a Windows runner.
+of them checks a concrete behavior or regression. GitHub Actions runs each
+platform's selected checks on every push and pull request.
 
 ---
 

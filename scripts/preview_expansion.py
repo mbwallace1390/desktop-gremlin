@@ -177,7 +177,9 @@ def motion_panel(gm, app):
     props = [app.motion.add_prop(k, x, FLOOR) for k, x in
              (("crate", 70), ("seesaw", 265), ("ramp", 465), ("fan", 670), ("conveyor", 905))]
     assert all(props)
-    rope.x, rope.y, rope.vx = 160, 185, 100
+    # Start left of the seesaw so the staged swing has not landed on it when
+    # this frame is exported; otherwise its caption describes a missing rope.
+    rope.x, rope.y, rope.vx = 130, 185, 100
     assert app.motion.start(rope, "rope", (245, 45))
     plane.x, plane.y, plane.on_ground = 800, 112, False
     assert app.motion.start(plane, "plane")
@@ -187,6 +189,7 @@ def motion_panel(gm, app):
     lifted.x, lifted.y = 670, 216
     advance(app, .34)
     assert len(app.motion.props) == 5 and len(app.motion.actions) >= 3
+    assert app.motion.actions.get(rope, {}).get("kind") == "rope"
     app.draw()
     return ["Crate", "Pendulum swing / seesaw", "Team boost + ramp", "Fan", "Paper plane / conveyor"]
 

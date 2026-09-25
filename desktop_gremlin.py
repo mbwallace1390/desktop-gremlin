@@ -65,7 +65,7 @@ if IS_WINDOWS:
 elif sys.platform != "linux":
     raise RuntimeError("Desktop Gremlin supports Windows and Linux X11.")
 
-VERSION = "3.3.0"
+VERSION = "3.3.1"
 DEBUG = "--debug" in sys.argv
 HERE, DATA_DIR = runtime_paths(__file__)
 SETTINGS_PATH = os.path.join(DATA_DIR, "gremlin_settings.json")
@@ -1777,6 +1777,10 @@ def dark_ttk(master):
                   foreground=[("readonly", ink)], background=[("active", "#39426B")],
                   selectbackground=[("readonly", deep)],
                   selectforeground=[("readonly", ink)])
+        for direction in ("Vertical", "Horizontal"):
+            style.configure("Gremlin.%s.TScrollbar" % direction, background=edge,
+                            troughcolor=deep, arrowcolor=ink, bordercolor=bg,
+                            lightcolor=edge, darkcolor=edge)
         master.option_add("*TCombobox*Listbox.background", deep)
         master.option_add("*TCombobox*Listbox.foreground", ink)
         master.option_add("*TCombobox*Listbox.selectBackground", edge)
@@ -1785,17 +1789,79 @@ def dark_ttk(master):
         pass
 
 
+class _SettingsPage(tk.Frame):
+    """Scroll only the tab's controls; the window's action buttons stay put."""
+    def __init__(self, master):
+        super().__init__(master, bg="#171B2C")
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.view = tk.Canvas(self, bg="#171B2C", highlightthickness=0)
+        self.view.grid(row=0, column=0, sticky="nsew")
+        self.vertical = ttk.Scrollbar(self, orient="vertical", command=self.view.yview,
+                                      style="Gremlin.Vertical.TScrollbar")
+        self.horizontal = ttk.Scrollbar(self, orient="horizontal", command=self.view.xview,
+                                        style="Gremlin.Horizontal.TScrollbar")
+        self.view.configure(yscrollcommand=self.vertical.set, xscrollcommand=self.horizontal.set)
+        self.content = tk.Frame(self.view, bg="#171B2C")
+        self.item = self.view.create_window(0, 0, anchor="nw", window=self.content)
+        self.content.bind("<Configure>", self._content_changed)
+        self.view.bind("<Configure>", self._viewport_changed)
+
+    def _content_changed(self, _event=None):
+        width, height = self.content.winfo_reqwidth(), self.content.winfo_reqheight()
+        # Keep the natural size for a roomy desktop; Settings caps its initial
+        # window to the work area. The canvas then supplies the missing space.
+        self.view.configure(width=width, height=height)
+        self._viewport_changed()
+
+    def _viewport_changed(self, _event=None):
+        width, height = self.content.winfo_reqwidth(), self.content.winfo_reqheight()
+        visible_w, visible_h = self.view.winfo_width(), self.view.winfo_height()
+        self.view.itemconfigure(self.item, width=max(width, visible_w))
+        self.view.configure(scrollregion=(0, 0, max(width, visible_w), height))
+        if height > visible_h:
+            self.vertical.grid(row=0, column=1, sticky="ns")
+        else:
+            self.vertical.grid_remove()
+        if width > visible_w:
+            self.horizontal.grid(row=1, column=0, sticky="ew")
+        else:
+            self.horizontal.grid_remove()
+
+    def reveal(self, widget):
+        """Keyboard navigation must reveal the focused control as well."""
+        if not str(widget).startswith(str(self.content) + "."):
+            return
+        x = widget.winfo_rootx() - self.content.winfo_rootx()
+        y = widget.winfo_rooty() - self.content.winfo_rooty()
+        for start, size, span, visible, origin, move in (
+                (x, widget.winfo_width(), self.content.winfo_reqwidth(),
+                 self.view.winfo_width(), self.view.canvasx(0), self.view.xview_moveto),
+                (y, widget.winfo_height(), self.content.winfo_reqheight(),
+                 self.view.winfo_height(), self.view.canvasy(0), self.view.yview_moveto)):
+            if start < origin:
+                move(max(0, start - 4) / max(1, span))
+            elif start + size > origin + visible:
+                move((start + size + 4 - visible) / max(1, span))
+
+
 class SettingsWindow:
     def __init__(self, master, app):
         self.app = app
         self.win = tk.Toplevel(master)
         self.win.title("Desktop Gremlin — settings")
         self.win.attributes("-topmost", True)
-        self.win.resizable(False, False)
+        self.win.resizable(True, True)
+        self.win.minsize(320, 240)
         self.win.configure(bg="#171B2C")
         self.vars = {}
         dark_ttk(self.win)
+        # Reserve the actions and feedback before allocating space to tabs.
+        # A tall Cast page used to consume the entire short window and hide Apply.
+        footer = tk.Frame(self.win, bg="#171B2C")
+        footer.pack(side="bottom", fill="x")
         tabs = ttk.Notebook(self.win)
+        self.tabs = tabs
         tabs.pack(fill="both", expand=True, padx=10, pady=(10, 0))
         page = None
         pad = {"padx": 14, "pady": 4}
@@ -1803,8 +1869,9 @@ class SettingsWindow:
 
         def header(txt):
             nonlocal row, page
-            page = tk.Frame(tabs, bg="#171B2C")
-            tabs.add(page, text=txt)
+            section = _SettingsPage(tabs)
+            tabs.add(section, text=txt)
+            page = section.content
             row = 0
             tk.Label(page, text=txt, bg="#171B2C", fg="#8FA0CC",
                      font=("Segoe UI", 9, "bold")).grid(
@@ -1913,7 +1980,8 @@ class SettingsWindow:
             row=row, column=0, columnspan=2, sticky="we", padx=14, pady=(0, 4))
         row += 1
 
-        bar = tk.Frame(self.win, bg="#171B2C")
+        bar = tk.Frame(footer, bg="#171B2C")
+        self._action_bar = bar
         bar.pack(fill="x", padx=10, pady=12)
         tk.Button(bar, text="Apply", command=self.apply, bg="#3A7D5C", fg="#FFFFFF",
                   activebackground="#4A9A72", relief="flat", width=12,
@@ -1922,15 +1990,65 @@ class SettingsWindow:
                   activebackground="#39426B", relief="flat", width=10,
                   font=("Segoe UI", 9), bd=0).pack(side="right", padx=4)
 
-        self.status = tk.Label(self.win, text="", bg="#171B2C", fg="#63E0A8",
+        self.status = tk.Label(footer, text="", bg="#171B2C", fg="#63E0A8",
                                font=("Segoe UI", 8))
         self.status.pack(pady=(0, 10))
         registered = getattr(getattr(app, "tray", None), "emergency_registered", False)
-        tk.Label(self.win, text=("Keyboard exit: Ctrl+Alt+Shift+Q" if registered else
+        exit_note = tk.Label(footer, text=("Keyboard exit: Ctrl+Alt+Shift+Q" if registered else
                                  "Keyboard exit shortcut unavailable; details are in the log."),
-                 bg="#171B2C", fg="#8FA0CC", font=("Segoe UI", 8)).pack(pady=(0, 10))
+                 bg="#171B2C", fg="#8FA0CC", font=("Segoe UI", 8))
+        exit_note.pack(pady=(0, 10))
+        footer.bind("<Configure>", lambda e: (
+            self.status.configure(wraplength=max(100, e.width - 24)),
+            exit_note.configure(wraplength=max(100, e.width - 24))))
+        self.win.bind("<MouseWheel>", self._scroll)
+        self.win.bind("<Button-4>", self._scroll)
+        self.win.bind("<Button-5>", self._scroll)
+        self.win.bind("<FocusIn>", self._focus_control, add="+")
         self.win.protocol("WM_DELETE_WINDOW", self.close)
+        self.win.after_idle(self._fit_to_work_area)
         dress_window(self.win)
+
+    def _fit_to_work_area(self):
+        if not self.win.winfo_exists():
+            return
+        self.win.update_idletasks()
+        # Pick the monitor containing the pointer, including negative origins.
+        x, y = self.win.winfo_pointerxy()
+        screens = monitors()
+        work = next((work for mon, work in screens
+                     if mon[0] <= x < mon[2] and mon[1] <= y < mon[3]), screens[0][1])
+        available_w, available_h = max(1, work[2] - work[0] - 24), max(1, work[3] - work[1] - 64)
+        width = min(self.win.winfo_reqwidth(), available_w)
+        height = min(self.win.winfo_reqheight(), available_h)
+        # Font scaling can make the action row wider than 320 px. Keep both
+        # labels intact when resizing, while still respecting a narrow display.
+        minimum_width = max(320, self._action_bar.winfo_reqwidth() + 20)
+        self.win.minsize(min(minimum_width, width), min(240, height))
+        left, top = work[0] + (work[2] - work[0] - width) // 2, work[1] + 12
+        # Tk interprets -x/-y geometry relative to the far edge. Use +negative
+        # for an absolute position on monitors left of or above the primary.
+        self.win.geometry("%dx%d+%d+%d" % (width, height, left, top))
+
+    def _focus_control(self, event):
+        selected = self.tabs.select()
+        if selected:
+            self.tabs.nametowidget(selected).reveal(event.widget)
+
+    def _scroll(self, event):
+        selected = self.tabs.select()
+        if not selected:
+            return
+        section = self.tabs.nametowidget(selected)
+        # Leave a scale/combobox's own wheel behavior alone. Only scroll events
+        # over this page, never over the stationary actions or another window.
+        if (not str(event.widget).startswith(str(section) + ".") or
+                isinstance(event.widget, (tk.Scale, ttk.Combobox))):
+            return
+        delta = getattr(event, "delta", 0)
+        direction = -1 if getattr(event, "num", None) == 4 or delta > 0 else 1
+        section.view.yview_scroll(direction * max(1, abs(int(delta)) // 120) * 3, "units")
+        return "break"
 
     def restore(self):
         self.app.cancel_icon_moves()
@@ -3844,11 +3962,13 @@ class App:
         """Closest one still on his feet. Free-for-all: no fixed pairings, so
         this is re-asked every time he decides what to do."""
         target = self.social.alliance_target(f) if hasattr(self, "social") else None
-        if target is not None:
+        if target is not None and self.social.can_engage(f, target):
             return target
         best, bd = None, 1e9
         for o in self.fighters:
             if o is f or o.hp <= 0 or o.state in ("ko", "grabbed"):
+                continue
+            if hasattr(self, "social") and not self.social.can_engage(f, o):
                 continue
             affinity = self.social.affinity(f, o) if hasattr(self, "social") else 0
             if affinity >= 80:
@@ -5341,6 +5461,8 @@ class App:
         f.goal = self.time + random.uniform(1.4, 3.6) / CFG["chaos"]
         if f.stun > 0:
             return
+        if self.social.rest_decision(f):
+            return
         if self.motion.consider(f):
             return
         if not self.combat_allowed(f):
@@ -5805,14 +5927,22 @@ class App:
 
     def _st_fight(self, f, dt, K):
         foe = f.foe
-        if not foe or foe.hp <= 0 or foe.state in ("ko", "grabbed"):
+        if self.social.fight_break(f, foe):
+            f.foe = f.target = None
+            f.mode = "roam"
+            f.set_state("idle")
+            f.goal = self.time + .5
+        elif not foe or foe.hp <= 0 or foe.state in ("ko", "grabbed"):
+            self.social.rest_after_fight(f, foe)
             f.mode = "roam"
             f.set_state("idle")
             f.goal = self.time + .4
         elif f.st > 12:
+            self.social.rest_after_fight(f, foe)
             f.mode = "roam"
             f.set_state("idle")
         elif f.hp <= f.per["nerve"] * 100:
+            self.social.rest_after_fight(f, foe)
             # he has had enough. The coward's nerve is high so he leaves
             # early; the zealot's is zero so he never does.
             f.mode = "roam"
@@ -8011,8 +8141,8 @@ class App:
         """His line in a rounded bubble whose tail points down at (hx, top),
         canvas coordinates: the top of his head, or of whatever is drawn over
         it. The bubble sits a tail's length above that, stays on the screen,
-        and moves clear of every bubble placed before it this frame -- up if
-        there is room, otherwise sideways -- so neighbours stay readable.
+        and moves clear of every bubble placed before it this frame. Nearby
+        gaps above are preferred; a crowded top edge can use the rows below.
 
         The tail used to be a line from the box corner to his head, and at the
         default size the box sat three pixels above the head, so there was no
@@ -8042,24 +8172,38 @@ class App:
         # On screen: a long line from someone near the right edge used to run
         # straight off it.
         shift(max(min(0.0, (self.W - 4) - box[2]), 4 - box[0]), max(0.0, 4 - box[1]))
-        # Clear of every bubble placed before this one, tail room included: up
-        # if there is room above, else to the right, else to the left.
+        # Search free gaps rather than repeatedly pushing away from whichever
+        # neighbour overlaps. Those pushes can oscillate between two blocked
+        # positions at the top edge, leaving several messages on the same spot.
+        # A free row changes only at an earlier bubble's top or bottom, so at
+        # most 2*n+3 rows need testing for the (at most nine) earlier speakers.
         room = 6          # between outlines; each 2 px stroke spills a pixel or two
-        for _ in range(12):
-            hit = [b for b in self._bubbles if box[0] < b[2] + room and b[0] < box[2] + room
-                   and box[1] < b[3] + room and b[1] < box[3] + cap + room]
-            if not hit:
-                break
-            up = box[3] + cap + room - min(b[1] for b in hit)
-            right = max(b[2] for b in hit) + room - box[0]
-            left = box[2] + room - min(b[0] for b in hit)
-            if box[1] - up >= 4:
-                shift(0, -up)
-            elif box[2] + right <= self.W - 4:
-                shift(right, 0)
-            elif box[0] - left >= 4:
-                shift(-left, 0)
-            else:
+        width, height = box[2] - box[0], box[3] - box[1]
+        bottom = max(4., self.H - 4 - height - cap)
+        shift(0, min(0., bottom - box[1]))
+        preferred_x, preferred_y = box[0], box[1]
+        rows = {preferred_y, 4., bottom}
+        for b in self._bubbles:
+            rows.update((b[1] - room - height - cap, b[3] + room))
+        obstacles = sorted(self._bubbles)
+        # Try the current row and progressively higher rows before placing a
+        # message below its speaker. Never move an older speaker's bubble.
+        rows = sorted((y for y in rows if 4 <= y <= bottom),
+                      key=lambda y: (y > preferred_y, abs(y - preferred_y)))
+        for y0 in rows:
+            left, choices = 4., []
+            for b in obstacles:
+                if y0 >= b[3] + room or b[1] >= y0 + height + cap + room:
+                    continue
+                # The gap before this occupied span can hold the whole body.
+                if b[0] - room - left >= width:
+                    choices.append(clamp(preferred_x, left, b[0] - room - width))
+                left = max(left, b[2] + room)
+            if self.W - 4 - left >= width:
+                choices.append(clamp(preferred_x, left, self.W - 4 - width))
+            if choices:
+                x0 = min(choices, key=lambda x: abs(x - preferred_x))
+                shift(x0 - box[0], y0 - box[1])
                 break
         self.canvas.coords(t, x + (box[0] + padx - bb[0]), y + (box[1] + pady - bb[1]))
         # The tail leaves the bottom edge as near over him as it can and points

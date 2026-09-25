@@ -49,6 +49,10 @@ BOND_EPSILON = 0.5            # below this a pair is forgotten, not stored
 # has already forgotten.
 BOND_STEP = 1.0
 FREE_STATES = frozenset(("idle", "walk", "taunt"))
+# Mischief alternates short bouts with breathing room for ordinary scenes.
+# These clocks govern new decisions, never damage, flight or scene ownership.
+FIGHT_BOUT = 18.0
+FIGHT_RECOVERY = 12.0
 RESCUABLE = frozenset(("ko", "fall", "thrown", "ledge", "cling", "foam",
                       "bubble", "frozen", "stuck"))
 INK, PAPER, GOLD, WOOD = "#38415b", "#fff5d9", "#efc55e", "#a9754d"
@@ -87,6 +91,7 @@ class SocialDirector:
         self.scenes, self.alliances, self.stickers = [], [], []
         self.owned, self.cooldowns = {}, {}
         self._hit_bond = {}       # pair key -> when a hit last deepened it
+        self._fight_started, self._recover_until = {}, {}
         self._decay_due = 0.0     # decay runs about once a second, not per frame
         self._decay_drift = 0.0   # fade not yet persisted, in score units
         self.time, self.next_scene, self.window_cooldown = 0.0, 8.0, 0.0
@@ -129,6 +134,51 @@ class SocialDirector:
                    for actor in pact["members"] + (target,)):
                 return target
         return None
+
+    def _pacing_enabled(self):
+        return (self.cfg.get("group_scenes", True) and
+                self.cfg.get("play_mode") == "mischief")
+
+    def recovering(self, f):
+        return (self._pacing_enabled() and f is not None and
+                self._recover_until.get(f.kind, 0) > self.time)
+
+    def can_engage(self, a, b):
+        """Recovery affects target choice; existing projectiles still hit."""
+        return not (self.recovering(a) or self.recovering(b))
+
+    def rest_after_fight(self, *actors):
+        if not self._pacing_enabled():
+            return
+        for f in actors:
+            if f is not None and f in self.app.fighters:
+                # A late hit cannot keep extending somebody's break forever.
+                if not self.recovering(f):
+                    self._recover_until[f.kind] = self.time + FIGHT_RECOVERY
+                self._fight_started.pop(f.kind, None)
+        # Nominate soon, after the fighters have actually landed and yielded.
+        self.next_scene = min(self.next_scene, self.time + .5)
+
+    def fight_break(self, f, foe):
+        """Called between attacks, only when normal grounded combat can yield."""
+        if (not self._pacing_enabled() or not f.on_ground or f.grabbed or
+                f.carry or f.mount or f.ridden_by):
+            return False
+        started = self._fight_started.setdefault(f.kind, self.time)
+        if (self.recovering(f) or self.recovering(foe) or
+                self.time - started >= FIGHT_BOUT):
+            self.rest_after_fight(f, foe)
+            return True
+        return False
+
+    def rest_decision(self, f):
+        if not self.recovering(f) or not self._available(f):
+            return False
+        f.foe = f.target = None
+        f.mode = "roam"
+        f.set_state("idle")
+        f.goal = getattr(self.app, "time", 0) + 1.0
+        return True
 
     def _bond(self, a, b, delta):
         key = self._key(a, b)
@@ -184,6 +234,10 @@ class SocialDirector:
         damage = _number(dmg)
         if att is vic or damage <= 0 or self.cfg.get("play_mode") == "peaceful":
             return
+        if damage >= vic.hp:
+            # Schedule a break, but let hit_fighter own the knockout and let
+            # the winner finish any unrelated activity already in progress.
+            self.rest_after_fight(att, vic)
         # One fight is one grudge per interval, and fighting alone stops at
         # HIT_BOND_FLOOR. Charging per landed hit with no bound drove every pair
         # to the -100 floor inside three minutes; see HIT_BOND_INTERVAL.
@@ -495,6 +549,21 @@ class SocialDirector:
     def update(self, dt):
         dt = _clamp(_number(dt), 0, .25)
         self.time += dt
+        if self._pacing_enabled():
+            kinds = {f.kind for f in self.app.fighters}
+            fighting = {f.kind for f in self.app.fighters
+                        if f.mode == "fight" or f.state == "fight"}
+            self._fight_started = {k: t for k, t in self._fight_started.items()
+                                   if k in fighting}
+            self._recover_until = {k: t for k, t in self._recover_until.items()
+                                   if k in kinds and t > self.time}
+            for f in self.app.fighters:
+                started = self._fight_started.get(f.kind)
+                if started is not None and self.time - started >= FIGHT_BOUT:
+                    self.rest_after_fight(f, f.foe)
+        else:
+            self._fight_started.clear()
+            self._recover_until.clear()
         self._decay_due += dt
         if self._decay_due >= 1.0:
             self._decay(self._decay_due)
@@ -546,12 +615,22 @@ class SocialDirector:
         available = [f for f in self.app.fighters if self._available(f)]
         if not available or len(self.scenes) >= self.MAX_SCENES:
             return
-        first = random.choice(available)
+        resting = [f for f in available if self.recovering(f)]
+        first = random.choice(resting or available)
         near = [f for f in available if f is not first and abs(f.x - first.x) < 400
                 and abs(f.y - first.y) < 45]
+        if resting and not near and any(
+                f is not first and self.recovering(f) and f.hp > 0 and
+                not f.grabbed and abs(f.x - first.x) < 400 and
+                self._recover_until[f.kind] - self.time > FIGHT_RECOVERY - 3
+                for f in self.app.fighters):
+            # Let a nearby partner finish the swing or landing before giving
+            # the first actor a solo scene that would occupy the whole break.
+            self.next_scene = self.time + .5
+            return
         random.shuffle(near)
         actors = [first] + near[:2]
-        if self.cfg.get("play_mode") != "peaceful":
+        if self.cfg.get("play_mode") != "peaceful" and not resting:
             fighters = [f for f in self.app.fighters if f.state in ("fight", "attack") and f.hp > 0]
             if len(fighters) >= 2 and random.random() < .45:
                 if self.start_scene("spectators", [first] + fighters[:2]):
@@ -604,6 +683,8 @@ class SocialDirector:
             self.alliances.clear()
             self.stickers.clear()
             self.cooldowns.clear()
+            self._fight_started.clear()
+            self._recover_until.clear()
             # _hit_bond deliberately survives: it is rate-limit state keyed by
             # character pair, not scene state keyed by actor. update() calls
             # clear() every frame when group_scenes is off, so wiping it here

@@ -19,13 +19,17 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness  # noqa: E402
 
+if sys.platform == "linux" and os.environ.get("GREMLIN_ISOLATED_X11") != "1":
+    raise SystemExit("Run Linux visual checks on isolated Xvfb with GREMLIN_ISOLATED_X11=1.")
+
 gm = harness.load("polish", crowd=3)
+WINDOWS = gm.IS_WINDOWS
 gm.monitors = lambda: [((0, 0, 1280, 900), (0, 0, 1280, 860))]
 gm.virtual_screen = lambda: (0, 0, 1280, 900)
 
 # The tray asks for its icon while App is built; record the size it wants.
 loads = []
-_real_load = gm.win32gui.LoadImage
+_real_load = gm.win32gui.LoadImage if WINDOWS else None
 
 
 def _spy_load(*args):
@@ -33,17 +37,20 @@ def _spy_load(*args):
     return _real_load(*args)
 
 
-gm.win32gui.LoadImage = _spy_load
+if WINDOWS:
+    gm.win32gui.LoadImage = _spy_load
 try:
     app = harness.build(gm)
 finally:
-    gm.win32gui.LoadImage = _real_load
+    if WINDOWS:
+        gm.win32gui.LoadImage = _real_load
 harness.fake_terrain(app)
 FLOOR = 860
 DARK = "#0C1024"
-SM_SMALL = (gm.win32api.GetSystemMetrics(gm.win32con.SM_CXSMICON),
-            gm.win32api.GetSystemMetrics(gm.win32con.SM_CYSMICON))
-SM_BIG = gm.win32api.GetSystemMetrics(gm.win32con.SM_CXICON)
+if WINDOWS:
+    SM_SMALL = (gm.win32api.GetSystemMetrics(gm.win32con.SM_CXSMICON),
+                gm.win32api.GetSystemMetrics(gm.win32con.SM_CYSMICON))
+    SM_BIG = gm.win32api.GetSystemMetrics(gm.win32con.SM_CXICON)
 bad = []
 
 
@@ -117,6 +124,14 @@ def name_items(f):
 
 def bubble_of(fi):
     """(outline points, body bottom, tail tip) of one fighter's bubble."""
+    if not WINDOWS:
+        plates = visible(app._ftag[fi][7], "rectangle")
+        tails = visible(app._ftag[fi][7], "line")
+        if len(plates) != 1 or len(tails) != 1:
+            return None
+        x0, y0, x1, y1 = app.canvas.coords(plates[0])
+        tip = points(tails[0])[-1]
+        return [(x0, y0), (x1, y0), (x1, y1), (x0, y1), tip], y1, tip
     shape = visible(app._ftag[fi][7], "polygon")
     if len(shape) != 1:
         return None
@@ -145,11 +160,16 @@ if main:
     mx, my = app.canvas.coords(main[0])
     offsets = sorted((round(app.canvas.coords(it)[0] - mx), round(app.canvas.coords(it)[1] - my))
                      for it in outline)
-    check("its letters carry a one-pixel dark outline",
-          offsets == [(-1, 0), (0, -1), (0, 1), (1, 0)])
-check("no solid plate under his feet to catch clicks",
-      not visible(app._ftag[0][7]) and not visible(app._ftag[0][8], "rectangle")
-      and not visible(app._ftag[0][8], "polygon"))
+    if WINDOWS:
+        check("its letters carry a one-pixel dark outline",
+              offsets == [(-1, 0), (0, -1), (0, 1), (1, 0)])
+if WINDOWS:
+    check("no solid plate under his feet to catch clicks",
+          not visible(app._ftag[0][7]) and not visible(app._ftag[0][8], "rectangle")
+          and not visible(app._ftag[0][8], "polygon"))
+else:
+    check("Linux name has its intentional contrasting plate",
+          len(visible(app._ftag[0][8], "rectangle")) == 1)
 f0.grabbed, app.hover = True, None
 app.draw()
 main, outline = name_items(f0)
@@ -224,7 +244,7 @@ f0.say("hm. this place.", 3.)
 app.draw()
 bubble = bubble_of(0)
 words = visible(app._ftag[0][8], "text")
-check("a speech bubble is one rounded shape", bubble is not None and len(words) == 1)
+check("a speech bubble has one body and its words", bubble is not None and len(words) == 1)
 if bubble is not None and len(words) == 1:
     hx, hy, hr, top = head_of(0)
     shape, body_bottom, tip = bubble
@@ -296,8 +316,9 @@ for case in range(400):
         f.say(rng.choice(lines_said).format(runs=3, throws=4, wins=1, losses=2,
                                             name="Steam"), 3.)
     app.draw()
-    boxes = [app.canvas.bbox(visible(app._ftag[i][7], "polygon")[0])
-             for i in (0, 1) if visible(app._ftag[i][7], "polygon")]
+    shape_kind = "polygon" if WINDOWS else "rectangle"
+    boxes = [app.canvas.bbox(visible(app._ftag[i][7], shape_kind)[0])
+             for i in (0, 1) if visible(app._ftag[i][7], shape_kind)]
     if len(boxes) != 2 or overlap(*boxes):
         clashes += 1
     for i in (0, 1):
@@ -386,9 +407,9 @@ park_all()
 app.draw()
 check("nobody awake snores", not visible(app._ftag[0][6], "line"))
 
-# --- 7. the drawing X11 needs, driven on Windows ---------------------------
-# The Linux look is the other branch of the same code. Flipping the flag after
-# startup draws it here; the X11 shape itself only runs on Linux.
+# --- 7. the drawing X11 needs ---------------------------------------------
+# Windows additionally exercises the fallback drawing branch. On Linux these
+# are real shaped-window frames: do not replace or stub out X11 presentation.
 gm.IS_WINDOWS = False
 try:
     park_all()
@@ -410,9 +431,14 @@ try:
     check("Linux: the name keeps its label plate",
           len(visible(app._ftag[1][8], "rectangle")) == 1 and name_items(f1)[0])
 finally:
-    gm.IS_WINDOWS = True
+    gm.IS_WINDOWS = WINDOWS
 park_all()
 app.draw()
+if not WINDOWS:
+    check("Linux visual frames reach the real X11 shape presenter",
+          app.x11_overlay is not None and
+          app.x11_overlay.present(app.fighters, app.ox, app.oy) and
+          not app.x11_overlay.failed)
 
 
 # --- 8. crisp icons at every scaling ----------------------------------------
@@ -445,12 +471,13 @@ check("every scaling step's small icon is in the full set",
 check("every image has the right size and a visible figure",
       all(images[s][1] and images[s][2] > s and images[s][3] > s for s in images))
 os.remove(path)
-kind, images = ico_images(gm.ICON_PATH)
-wants = getattr(gm, "tray_icon_sizes", lambda: ())()
-check("the tray's file carries this machine's exact sizes (%d, %d)" % (SM_SMALL[0], SM_BIG),
-      set(images) == set(wants) and SM_SMALL[0] in images and SM_BIG in images)
-check("the tray loads the system small-icon size (%dx%d)" % SM_SMALL,
-      bool(loads) and tuple(loads[0][3:5]) == SM_SMALL)
+if WINDOWS:
+    kind, images = ico_images(gm.ICON_PATH)
+    wants = getattr(gm, "tray_icon_sizes", lambda: ())()
+    check("the tray's file carries this machine's exact sizes (%d, %d)" % (SM_SMALL[0], SM_BIG),
+          set(images) == set(wants) and SM_SMALL[0] in images and SM_BIG in images)
+    check("the tray loads the system small-icon size (%dx%d)" % SM_SMALL,
+          bool(loads) and tuple(loads[0][3:5]) == SM_SMALL)
 app_ico = os.path.join(harness.ROOT, "packaging", "app.ico")
 kind, images = ico_images(app_ico)
 check("the EXE icon carries 16 to 256 px",
@@ -476,12 +503,13 @@ sw = app.settings_win
 sw.win.update()
 style = gm.ttk.Style(app.root)
 dark = ("#171b2c", "#0e1120", "#232a45", "#2a3150")
-check("Settings tabs and choices use the dark theme", style.theme_use() == "clam"
-      and str(style.lookup("TNotebook", "background")).lower() in dark
-      and str(style.lookup("TCombobox", "fieldbackground")).lower() in dark)
-check("the selected tab keeps its width",
-      str(style.lookup("TNotebook.Tab", "padding", ("selected",)))
-      == str(style.lookup("TNotebook.Tab", "padding")))
+if WINDOWS:
+    check("Settings tabs and choices use the dark theme", style.theme_use() == "clam"
+          and str(style.lookup("TNotebook", "background")).lower() in dark
+          and str(style.lookup("TCombobox", "fieldbackground")).lower() in dark)
+    check("the selected tab keeps its width",
+          str(style.lookup("TNotebook.Tab", "padding", ("selected",)))
+          == str(style.lookup("TNotebook.Tab", "padding")))
 
 
 def descendants(widget):
@@ -495,9 +523,10 @@ cast = [book.nametowidget(t) for t in book.tabs() if book.tab(t, "text") == "Cas
 check("the Cast tab has no light native frame",
       not [w for w in descendants(cast) if w.winfo_class() == "TFrame"])
 check("Settings wears the gremlin icon", getattr(sw.win, "gremlin_icon", None) is not None)
-frame = int(sw.win.wm_frame(), 16)
-check("its title bar and taskbar icons are this scaling's exact sizes",
-      (icon_px(frame, 0), icon_px(frame, 1)) == (SM_SMALL[0], SM_BIG))
+if WINDOWS:
+    frame = int(sw.win.wm_frame(), 16)
+    check("its title bar and taskbar icons are this scaling's exact sizes",
+          (icon_px(frame, 0), icon_px(frame, 1)) == (SM_SMALL[0], SM_BIG))
 sw.close()
 hidden = gm.SettingsWindow(app.root, app)
 shown = hidden.win.winfo_ismapped()

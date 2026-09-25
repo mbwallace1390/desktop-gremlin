@@ -117,18 +117,20 @@
 <polyline points="908.57,222 914.57,225 908.57,228" fill="none" stroke="#EAF4FF" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
 <polyline points="932.74,222 938.74,225 932.74,228" fill="none" stroke="#EAF4FF" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
 <polyline points="956.9,222 962.9,225 956.9,228" fill="none" stroke="#EAF4FF" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="245,45 180.22,167.93" fill="none" stroke="#B6A38B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<ellipse cx="245" cy="45" rx="3" ry="3" fill="#677B92" stroke="none" stroke-width="1"/>
 <polyline points="813.76,115.69 901.76,108.69 831.76,129.69 813.76,115.69" fill="none" stroke="#EAF4FF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
 <polyline points="831.76,129.69 852.76,116.69 901.76,108.69" fill="none" stroke="#677B92" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
 <polyline points="805.76,120.69 788.76,123.69" fill="none" stroke="#677B92" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="190.8,191.94 197.46,206.48 188.8,219.94" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="190.8,191.94 196.89,206.73 203.8,225.94" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="188.2,165.07 175.31,163.41 178.8,175.94" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="190.8,191.94 188.2,166.07" fill="none" stroke="#F3F5FB" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-<ellipse cx="187.11" cy="155.12" rx="11.5" ry="11.5" fill="#F3F5FB" stroke="#D0B583" stroke-width="5"/>
-<ellipse cx="189.95" cy="153.03" rx="2.2" ry="2.2" fill="#171923" stroke="none" stroke-width="1"/>
-<ellipse cx="182.98" cy="153.73" rx="2.2" ry="2.2" fill="#171923" stroke="none" stroke-width="1"/>
-<polyline points="184.38,160.02 190.75,159.38" fill="none" stroke="#171923" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="188.2,165.07 192.27,177.41 204.8,173.94" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="180.22,199.93 174.98,215.05 168.22,231.93" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="180.22,199.93 194.58,206.99 193.22,222.93" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="177.63,173.06 190.58,171.97 178.22,167.93" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="180.22,199.93 177.63,174.06" fill="none" stroke="#F3F5FB" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<ellipse cx="176.53" cy="163.12" rx="11.5" ry="11.5" fill="#F3F5FB" stroke="#D0B583" stroke-width="5"/>
+<ellipse cx="180.03" cy="160.96" rx="2.2" ry="2.2" fill="#171923" stroke="none" stroke-width="1"/>
+<ellipse cx="173.06" cy="161.66" rx="2.2" ry="2.2" fill="#171923" stroke="none" stroke-width="1"/>
+<polyline points="173.8,168.02 180.17,167.38" fill="none" stroke="#171923" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="177.63,173.06 189.26,178.86 182.22,167.93" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 <polyline points="843.76,102.69 843.25,118.68 827.76,122.69" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 <polyline points="843.76,102.69 854.86,114.22 842.76,124.69" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 <polyline points="858.87,80.53 859.89,93.49 872.76,91.69" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -189,8 +191,8 @@
 <polyline points="235.22,173.19 241.73,184.44 231.94,193" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 <polyline points="238.33,200 235.22,174.19" fill="none" stroke="#F3F5FB" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
 <ellipse cx="233.9" cy="163.27" rx="11.5" ry="11.5" fill="#F3F5FB" stroke="#D0B583" stroke-width="5"/>
-<ellipse cx="230.67" cy="161.84" rx="2.2" ry="2.2" fill="#171923" stroke="none" stroke-width="1"/>
-<ellipse cx="237.62" cy="161" rx="2.2" ry="2.2" fill="#171923" stroke="none" stroke-width="1"/>
+<ellipse cx="230.02" cy="161.92" rx="2.2" ry="2.2" fill="#171923" stroke="none" stroke-width="1"/>
+<ellipse cx="236.96" cy="161.08" rx="2.2" ry="2.2" fill="#171923" stroke="none" stroke-width="1"/>
 <polyline points="237.63,167.45 231.28,168.22" fill="none" stroke="#171923" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <polyline points="235.22,173.19 246.24,180.09 244.72,193" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 <polyline points="331.33,200 332.93,215.92 325.33,230" fill="none" stroke="#F3F5FB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -247,5 +249,5 @@
 <text x="163" y="300" class="label">Lookout, distraction, stolen hat, escape</text>
 <text x="689" y="300" class="label">A coffee break builds friendship</text>
 </g>
-<text x="40" y="1124" fill="#AEBFD6" font-size="12">213 real Canvas items across 3 frames. Characters, props, projectiles and effects come from production code.</text>
+<text x="40" y="1124" fill="#AEBFD6" font-size="12">215 real Canvas items across 3 frames. Characters, props, projectiles and effects come from production code.</text>
 </svg>
